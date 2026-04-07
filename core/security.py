@@ -302,23 +302,23 @@ class RedisRateLimiter:
     """
 
     _LUA_SCRIPT = """
-    local key = KEYS[1]
-    local now = tonumber(ARGV[1])
-    local window = tonumber(ARGV[2])
-    local max_req = tonumber(ARGV[3])
-    local cutoff = now - window
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+local max_req = tonumber(ARGV[3])
+local cutoff = now - window
 
-    redis.call('ZREMRANGEBYSCORE', key, '-inf', cutoff)
-    local count = redis.call('ZCARD', key)
+redis.call('ZREMRANGEBYSCORE', key, '-inf', cutoff)
+local count = redis.call('ZCARD', key)
 
-    if count >= max_req then
-        return 0
-    end
+if count >= max_req then
+    return -1
+end
 
-    redis.call('ZADD', key, now, now .. '-' .. math.random(1000000))
-    redis.call('EXPIRE', key, math.ceil(window) + 1)
-    return max_req - count - 1
-    """
+redis.call('ZADD', key, now, now .. '-' .. math.random(1000000))
+redis.call('EXPIRE', key, math.ceil(window) + 1)
+return max_req - count - 1
+"""
 
     def __init__(
         self,
@@ -355,7 +355,9 @@ class RedisRateLimiter:
                 keys=[key],
                 args=[now, self.window_seconds, self.max_requests],
             )
-            return int(result) >= 0 if result != 0 else False
+            if result is None:
+                return True  # fail-open
+            return int(result) >= 0  # -1 = bloqué, >= 0 = autorisé (0 = dernier slot)
         except Exception as exc:
             logger.warning(
                 "Redis rate limiter unreachable — failing open (request allowed)",

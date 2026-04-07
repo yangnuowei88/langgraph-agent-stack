@@ -27,7 +27,7 @@ WORKDIR /build
 COPY pyproject.toml .
 COPY README.md .
 # If a lockfile exists, copy it too; otherwise uv will resolve from pyproject.toml
-COPY uv.lock* ./
+COPY uv.lock ./
 
 # Install production dependencies into an explicit virtual environment.
 # --locked  : respect the lockfile if present, fail if out of date

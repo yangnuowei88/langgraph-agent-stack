@@ -675,15 +675,16 @@ def test_run_stream_done_event_has_required_fields(test_client: TestClient) -> N
 
 
 def test_run_stream_timeout_returns_error_event() -> None:
-    """When ResearchAgent.run_structured raises AgentTimeoutError, SSE emits an error event."""
+    """When MultiAgentGraph.run raises AgentTimeoutError, SSE emits an error event."""
     from core.security import RateLimiter
 
     permissive = RateLimiter(max_requests=10_000, window_seconds=60.0)
-    mock_agent = MagicMock()
-    mock_agent.run_structured.side_effect = AgentTimeoutError("Step budget exceeded")
+    mock_graph_instance = MagicMock()
+    mock_graph_instance.run.side_effect = AgentTimeoutError("Step budget exceeded")
+    mock_graph_cls = MagicMock(return_value=mock_graph_instance)
 
     with (
-        patch("api.main.ResearchAgent", return_value=mock_agent),
+        patch("api.main.MultiAgentGraph", mock_graph_cls),
         patch("api.main._rate_limiter", permissive),
         patch("api.main.get_shared_llm", return_value=MagicMock(spec=True)),
         patch("api.main.get_shared_checkpointer", return_value=MagicMock()),

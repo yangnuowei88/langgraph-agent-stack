@@ -42,7 +42,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from langchain_core.language_models import BaseChatModel
 
-from agents.analyst import AnalystAgent
 from agents.base_agent import (
     AgentExecutionError,
     AgentTimeoutError,
@@ -61,7 +60,7 @@ from api.models import (
 )
 from core.config import Settings, get_settings
 from core.graph import MultiAgentGraph
-from core.memory import ConversationMemory
+from core.memory import ConversationMemory, cleanup_checkpointer
 
 # ---------------------------------------------------------------------------
 # Logging — structured JSON via core.observability when available
@@ -242,6 +241,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     _shutting_down.set()
     if server_shutting_down is not None:
         server_shutting_down.set(1)
+    cleanup_checkpointer()
     if _executor is not None:
         _executor.shutdown(wait=True, cancel_futures=False)
     if _shared_checkpointer is not None and hasattr(_shared_checkpointer, "close"):
@@ -341,9 +341,20 @@ async def add_security_headers(request: Request, call_next: Any) -> Any:
     response: Response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"
-    response.headers["Content-Security-Policy"] = "default-src 'self'"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["Cache-Control"] = "no-store"
+
+    # CSP assoupli pour les pages de documentation (chargent JS/CSS depuis CDN)
+    if request.url.path in ("/docs", "/redoc", "/openapi.json"):
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' cdn.jsdelivr.net; "
+            "style-src 'self' 'unsafe-inline' cdn.jsdelivr.net; "
+            "img-src 'self' data: fastapi.tiangolo.com;"
+        )
+    else:
+        response.headers["Content-Security-Policy"] = "default-src 'self'"
+
     # HSTS is only meaningful over HTTPS — restrict to production to avoid
     # breaking local HTTP development and test environments.
     if get_settings().environment == "production":
@@ -848,32 +859,18 @@ async def _stream_pipeline(
     if active_pipelines is not None:
         active_pipelines.inc()
     try:
-        yield f"data: {json.dumps({'type': 'status', 'message': 'Starting research phase...'})}\n\n"
+        yield f"data: {json.dumps({'type': 'status', 'message': 'Starting pipeline...'})}\n\n"
 
         loop = asyncio.get_running_loop()
         llm = get_shared_llm()
         checkpointer = get_shared_checkpointer()
 
-        research_agent = ResearchAgent(
-            thread_id=run_id,
-            llm=llm,
-            checkpointer=checkpointer,
-        )
-        research_result = await loop.run_in_executor(
-            _executor, research_agent.run_structured, query
-        )
+        yield f"data: {json.dumps({'type': 'agent_switch', 'from': 'orchestrator', 'to': 'researcher'})}\n\n"
+
+        pipeline = MultiAgentGraph(run_id=run_id, llm=llm, checkpointer=checkpointer)
+        report = await loop.run_in_executor(_executor, pipeline.run, query)
 
         yield f"data: {json.dumps({'type': 'agent_switch', 'from': 'researcher', 'to': 'analyst'})}\n\n"
-        yield f"data: {json.dumps({'type': 'status', 'message': 'Starting analysis phase...'})}\n\n"
-
-        analyst_agent = AnalystAgent(
-            thread_id=run_id,
-            llm=llm,
-            checkpointer=checkpointer,
-        )
-        report = await loop.run_in_executor(
-            _executor, analyst_agent.run_structured, research_result
-        )
 
         logger.info(
             "POST /run/stream — pipeline completed",
@@ -885,7 +882,6 @@ async def _stream_pipeline(
         )
 
         if _shared_memory is not None:
-            loop = asyncio.get_running_loop()
             await loop.run_in_executor(
                 _executor,
                 functools.partial(

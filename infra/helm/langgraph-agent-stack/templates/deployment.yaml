@@ -1,3 +1,6 @@
+{{- if and (gt (int .Values.replicaCount) 1) (eq .Values.config.memoryBackend "sqlite") }}
+  {{ fail "ERROR: SQLite ne supporte pas replicaCount > 1. Changez memoryBackend a redis ou postgres." }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

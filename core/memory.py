@@ -148,6 +148,11 @@ def _create_sqlite_checkpointer(sqlite_path: str) -> Any:
         from langgraph.checkpoint.sqlite import SqliteSaver  # type: ignore[import]
 
         conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        # WAL mode — cohérent avec ConversationMemory, requis pour accès concurrent
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        conn.execute("PRAGMA cache_size=1000")
         checkpointer = SqliteSaver(conn)
         logger.info(
             "Checkpointer: SqliteSaver initialised",
@@ -162,6 +167,29 @@ def _create_sqlite_checkpointer(sqlite_path: str) -> Any:
             extra={"sqlite_path": sqlite_path},
         )
         return _fallback_or_raise("langgraph-checkpoint-sqlite not installed.")
+
+
+# Module-level references for cleanup
+_active_checkpointer_cm: Any = None
+
+
+def _set_checkpointer_cm(cm: Any) -> None:
+    """Store the context manager for proper cleanup at shutdown."""
+    global _active_checkpointer_cm
+    _active_checkpointer_cm = cm
+
+
+def cleanup_checkpointer() -> None:
+    """Exit the checkpointer context manager if one is active. Call at shutdown."""
+    global _active_checkpointer_cm
+    if _active_checkpointer_cm is not None:
+        try:
+            _active_checkpointer_cm.__exit__(None, None, None)
+            logger.debug("Checkpointer context manager exited cleanly.")
+        except Exception as exc:
+            logger.warning("Checkpointer cleanup failed", extra={"error": str(exc)})
+        finally:
+            _active_checkpointer_cm = None
 
 
 def _create_redis_checkpointer(redis_url: str) -> Any:
@@ -182,6 +210,7 @@ def _create_redis_checkpointer(redis_url: str) -> Any:
 
         conn = RedisSaver.from_conn_string(redis_url)
         checkpointer = conn.__enter__()
+        _set_checkpointer_cm(conn)
         logger.info(
             "Checkpointer: RedisSaver initialised",
             extra={"url": redis_url.split("@")[-1]},
@@ -235,6 +264,7 @@ def _create_postgres_checkpointer(postgres_url: str | None) -> Any:
 
         conn = PostgresSaver.from_conn_string(postgres_url)
         checkpointer = conn.__enter__()
+        _set_checkpointer_cm(conn)
         checkpointer.setup()
         logger.info(
             "Checkpointer: PostgresSaver initialised (tables created)",

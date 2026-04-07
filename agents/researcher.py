@@ -130,6 +130,7 @@ class ResearchAgent(BaseAgent):
             "Provide 3 focused sub-queries that would help gather comprehensive "
             "information. Return ONLY a JSON array of strings."
         )
+        sub_queries: list[str] = [query]  # valeur par défaut en cas d'échec
         try:
             expansion_msg = self._invoke_llm_with_retry(
                 [
@@ -138,20 +139,17 @@ class ResearchAgent(BaseAgent):
                 ]
             )
             parsed = json.loads(_extract_text_content(expansion_msg.content))
-            sub_queries: list[str] = (
-                list(map(str, parsed)) if isinstance(parsed, list) else [query]
-            )  # type: ignore[assignment]
+            if isinstance(parsed, list):
+                sub_queries = list(map(str, parsed))
         except json.JSONDecodeError:
             logger.warning(
                 "Query expansion returned non-JSON, falling back to original query"
             )
-            sub_queries: list[str] = [query]  # type: ignore[no-redef]
         except Exception:
             logger.warning(
                 "Query expansion failed unexpectedly, falling back to original query",
                 exc_info=True,
             )
-            sub_queries: list[str] = [query]  # type: ignore[no-redef]
 
         search_tool = next((t for t in self.tools if t.name == "web_search"), None)
         new_findings: list[str] = []

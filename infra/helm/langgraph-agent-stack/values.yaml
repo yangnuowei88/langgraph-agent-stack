@@ -1,4 +1,4 @@
-replicaCount: 2
+replicaCount: 1  # SQLite ne supporte qu'un seul écrivain. Utilisez redis ou postgres pour scaler.
 
 image:
   repository: langgraph-agent-stack
@@ -37,6 +37,7 @@ config:
   memoryBackend: sqlite
   sqlitePath: /app/data/memory.db
   maxTokens: "4096"
+  rateLimitBackend: "memory"  # "redis" requis pour multi-replica (partage l'état entre pods)
 
 # Persistent storage for SQLite data (only relevant when memoryBackend=sqlite).
 # Persistent storage for SQLite run-history.  Enabled by default so that
