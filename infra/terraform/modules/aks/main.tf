@@ -61,8 +61,8 @@ resource "azurerm_kubernetes_cluster" "main" {
 
     # Auto-scaling bounds differ per environment.
     auto_scaling_enabled = true
-    min_count           = var.environment == "prod" ? 2 : 1
-    max_count           = var.environment == "prod" ? 10 : 3
+    min_count            = var.environment == "prod" ? 2 : 1
+    max_count            = var.environment == "prod" ? 10 : 3
 
     upgrade_settings {
       # Allow 10 % surge capacity during node pool upgrades.

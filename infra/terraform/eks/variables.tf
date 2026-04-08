@@ -35,7 +35,7 @@ variable "helm_chart_path" {
   description = "Path to the langgraph-agent-stack Helm chart directory."
   type        = string
   # Relative to this entry-point directory: infra/terraform/eks/
-  default     = "../../helm/langgraph-agent-stack"
+  default = "../../helm/langgraph-agent-stack"
 }
 
 variable "anthropic_api_key" {
