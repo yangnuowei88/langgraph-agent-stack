@@ -120,7 +120,7 @@ class ResearchAgent(BaseAgent):
         state = self._increment_step(state)
         self._log_step("research", state)
 
-        query = state["messages"][0].content  # type: ignore[union-attr]
+        query = _extract_text_content(state["messages"][0].content)
         iterations: int = state.get("context", {}).get(self._CTX_ITERATIONS, 0)
         existing: list[str] = state.get("context", {}).get(self._CTX_FINDINGS, [])
         sources: list[str] = state.get("context", {}).get(self._CTX_SOURCES, [])
@@ -194,7 +194,7 @@ class ResearchAgent(BaseAgent):
         self._log_step("validate", state)
 
         findings: list[str] = state.get("context", {}).get(self._CTX_FINDINGS, [])
-        query = state["messages"][0].content  # type: ignore[union-attr]
+        query = _extract_text_content(state["messages"][0].content)
 
         if not findings:
             return {
@@ -260,7 +260,7 @@ class ResearchAgent(BaseAgent):
         state = self._increment_step(state)
         self._log_step("summarize", state)
 
-        query = state["messages"][0].content  # type: ignore[union-attr]
+        query = _extract_text_content(state["messages"][0].content)
         findings: list[str] = state.get("context", {}).get(self._CTX_FINDINGS, [])
         sources: list[str] = state.get("context", {}).get(self._CTX_SOURCES, [])
 
