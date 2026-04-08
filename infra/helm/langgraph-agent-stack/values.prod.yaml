@@ -6,7 +6,7 @@ image:
 config:
   environment: production
   memoryBackend: redis
-  rateLimitBackend: "redis"  # AJOUTER — partage l'état entre replicas
+  rateLimitBackend: "redis"  # share rate-limit state across replicas
 
 resources:
   requests:

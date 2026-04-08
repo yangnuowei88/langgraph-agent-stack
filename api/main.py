@@ -241,14 +241,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     _shutting_down.set()
     if server_shutting_down is not None:
         server_shutting_down.set(1)
-    cleanup_checkpointer()
     if _executor is not None:
         _executor.shutdown(wait=True, cancel_futures=False)
-    if _shared_checkpointer is not None and hasattr(_shared_checkpointer, "close"):
-        try:
-            _shared_checkpointer.close()
-        except Exception:
-            logger.debug("Checkpointer close failed (non-critical)", exc_info=True)
+    cleanup_checkpointer()
     if _shared_memory is not None:
         _shared_memory.close()
     logger.info("Shutdown complete")
@@ -842,6 +837,14 @@ async def _stream_pipeline(
     * ``status``       — Progress message (``{"type": "status", "message": "…"}``).
     * ``agent_switch`` — Transition between agents
                          (``{"type": "agent_switch", "from": "…", "to": "…"}``).
+
+    Note:
+        ``agent_switch`` events are emitted after pipeline completion
+        (``MultiAgentGraph.run()`` is synchronous).  They are progress
+        indicators, not real-time execution milestones.  For true
+        real-time token streaming, use ``graph.astream_events()`` with
+        an async-native LangGraph configuration.
+
     * ``done``         — Final success event with traceability metadata
                          (``{"type": "done", "run_id": "…", "session_id": "…",
                          "confidence": 0.87}``).
@@ -1113,7 +1116,7 @@ async def run_research(
             _shared_memory.save_run(
                 run_id=run_id,
                 query=query,
-                result=vars(result) if hasattr(result, "__dict__") else {},
+                result=result.to_dict(),
                 metadata={"session_id": session_id, "agent": "ResearchAgent"},
             )
 

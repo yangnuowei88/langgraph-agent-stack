@@ -48,7 +48,9 @@ spec:
         seccompProfile:
           type: RuntimeDefault
 
-      terminationGracePeriodSeconds: 30
+      # Must exceed STREAM_TIMEOUT_SECONDS (default 120s) so in-flight SSE
+      # streams can finish before the pod is killed during rolling updates.
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds | default 150 }}
 
       containers:
         - name: api

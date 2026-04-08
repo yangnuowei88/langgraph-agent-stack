@@ -107,3 +107,7 @@ serviceMonitor:
   enabled: false
   namespace: monitoring
   interval: 30s
+
+# Grace period must exceed STREAM_TIMEOUT_SECONDS so in-flight SSE streams
+# finish before Kubernetes kills the pod.  120s (stream timeout) + 30s buffer.
+terminationGracePeriodSeconds: 150

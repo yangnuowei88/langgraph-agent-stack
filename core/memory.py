@@ -171,25 +171,28 @@ def _create_sqlite_checkpointer(sqlite_path: str) -> Any:
 
 # Module-level references for cleanup
 _active_checkpointer_cm: Any = None
+_checkpointer_lock: threading.Lock = threading.Lock()
 
 
 def _set_checkpointer_cm(cm: Any) -> None:
-    """Store the context manager for proper cleanup at shutdown."""
+    """Thread-safe store of the context manager for proper cleanup at shutdown."""
     global _active_checkpointer_cm
-    _active_checkpointer_cm = cm
+    with _checkpointer_lock:
+        _active_checkpointer_cm = cm
 
 
 def cleanup_checkpointer() -> None:
     """Exit the checkpointer context manager if one is active. Call at shutdown."""
     global _active_checkpointer_cm
-    if _active_checkpointer_cm is not None:
-        try:
-            _active_checkpointer_cm.__exit__(None, None, None)
-            logger.debug("Checkpointer context manager exited cleanly.")
-        except Exception as exc:
-            logger.warning("Checkpointer cleanup failed", extra={"error": str(exc)})
-        finally:
-            _active_checkpointer_cm = None
+    with _checkpointer_lock:
+        if _active_checkpointer_cm is not None:
+            try:
+                _active_checkpointer_cm.__exit__(None, None, None)
+                logger.debug("Checkpointer context manager exited cleanly.")
+            except Exception as exc:
+                logger.warning("Checkpointer cleanup failed", extra={"error": str(exc)})
+            finally:
+                _active_checkpointer_cm = None
 
 
 def _create_redis_checkpointer(redis_url: str) -> Any:

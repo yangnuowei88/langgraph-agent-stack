@@ -772,3 +772,102 @@ def test_drain_middleware_allows_ready_during_shutdown() -> None:
     with _shutdown_client_ctx() as client:
         response = client.get("/ready")
     assert response.status_code in (200, 503)  # depends on init state
+
+
+# ---------------------------------------------------------------------------
+# SSE error-path and gauge coverage
+# ---------------------------------------------------------------------------
+
+
+def test_run_stream_agent_execution_error_emits_error_event() -> None:
+    """When MultiAgentGraph.run raises AgentExecutionError, SSE emits an error event."""
+    from core.security import RateLimiter
+
+    permissive = RateLimiter(max_requests=10_000, window_seconds=60.0)
+    mock_graph_instance = MagicMock()
+    mock_graph_instance.run.side_effect = AgentExecutionError("Research node failed")
+    mock_graph_cls = MagicMock(return_value=mock_graph_instance)
+
+    with (
+        patch("api.main.MultiAgentGraph", mock_graph_cls),
+        patch("api.main._rate_limiter", permissive),
+        patch("api.main.get_shared_llm", return_value=MagicMock(spec=True)),
+        patch("api.main.get_shared_checkpointer", return_value=MagicMock()),
+    ):
+        from api.main import app
+
+        with TestClient(app, raise_server_exceptions=False) as client:
+            response = client.post("/run/stream", json={"query": "test query"})
+
+    assert response.status_code == 200
+
+    error_events = [
+        json.loads(line[6:])
+        for line in response.text.strip().split("\n")
+        if line.strip().startswith("data: ")
+        and json.loads(line.strip()[6:]).get("type") == "error"
+    ]
+    assert len(error_events) >= 1, "Expected at least one 'error' SSE event"
+    assert "error" in error_events[0]["message"].lower() or "pipeline" in error_events[0]["message"].lower()
+
+
+def test_run_stream_active_pipelines_gauge_decremented_on_error() -> None:
+    """active_pipelines gauge must be decremented in the finally block even on error."""
+    from core.security import RateLimiter
+
+    permissive = RateLimiter(max_requests=10_000, window_seconds=60.0)
+
+    mock_gauge = MagicMock()
+    mock_graph_instance = MagicMock()
+    mock_graph_instance.run.side_effect = AgentExecutionError("forced failure")
+    mock_graph_cls = MagicMock(return_value=mock_graph_instance)
+
+    with (
+        patch("api.main.MultiAgentGraph", mock_graph_cls),
+        patch("api.main._rate_limiter", permissive),
+        patch("api.main.get_shared_llm", return_value=MagicMock(spec=True)),
+        patch("api.main.get_shared_checkpointer", return_value=MagicMock()),
+        patch("api.main.active_pipelines", mock_gauge),
+    ):
+        from api.main import app
+
+        with TestClient(app, raise_server_exceptions=False) as client:
+            client.post("/run/stream", json={"query": "test query"})
+
+    mock_gauge.inc.assert_called_once()
+    mock_gauge.dec.assert_called_once()
+
+
+def test_run_stream_active_pipelines_gauge_decremented_on_success() -> None:
+    """active_pipelines gauge must be decremented after a successful stream."""
+    from core.security import RateLimiter
+
+    permissive = RateLimiter(max_requests=10_000, window_seconds=60.0)
+
+    mock_gauge = MagicMock()
+    mock_graph_instance = MagicMock()
+    mock_graph_instance.run.return_value = MagicMock(
+        executive_summary="s",
+        key_insights=[],
+        patterns=[],
+        implications=[],
+        confidence=0.9,
+        research_summary="r",
+        to_dict=MagicMock(return_value={}),
+    )
+    mock_graph_cls = MagicMock(return_value=mock_graph_instance)
+
+    with (
+        patch("api.main.MultiAgentGraph", mock_graph_cls),
+        patch("api.main._rate_limiter", permissive),
+        patch("api.main.get_shared_llm", return_value=MagicMock(spec=True)),
+        patch("api.main.get_shared_checkpointer", return_value=MagicMock()),
+        patch("api.main.active_pipelines", mock_gauge),
+    ):
+        from api.main import app
+
+        with TestClient(app, raise_server_exceptions=False) as client:
+            client.post("/run/stream", json={"query": "test query"})
+
+    mock_gauge.inc.assert_called_once()
+    mock_gauge.dec.assert_called_once()

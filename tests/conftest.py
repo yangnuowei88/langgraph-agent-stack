@@ -8,7 +8,6 @@ MultiAgentGraph and ResearchAgent with MagicMock instances.
 
 from __future__ import annotations
 
-import os
 from collections.abc import Generator
 from unittest.mock import MagicMock, patch
 
@@ -16,17 +15,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agents.models import AnalysisReport, ResearchResult
-
-# ---------------------------------------------------------------------------
-# Environment must be patched BEFORE the settings singleton is imported.
-# LLM_PROVIDER=anthropic with a dummy key so Settings loads without error.
-# ---------------------------------------------------------------------------
-os.environ.setdefault("LLM_PROVIDER", "anthropic")
-os.environ.setdefault("ANTHROPIC_API_KEY", "sk-ant-test123456789012345")
-os.environ.setdefault("MEMORY_BACKEND", "sqlite")
-os.environ.setdefault("SQLITE_PATH", ":memory:")
-os.environ.setdefault("ENVIRONMENT", "development")
-
 
 # ---------------------------------------------------------------------------
 # Domain-object fixtures
