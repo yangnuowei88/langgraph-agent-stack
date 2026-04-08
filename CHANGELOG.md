@@ -7,7 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-04-08
+
 ### Added
+- **Mock LLM provider** (`LLM_PROVIDER=mock`) — run the full pipeline without any
+  API key using deterministic `FakeListChatModel` responses from langchain-core
+- **Real-time SSE streaming** via `MultiAgentGraph.stream_events()` using LangGraph's
+  `astream_events(version="v2")` — replaces the batch `phase_completed` events with
+  true `phase_started`, `phase_completed`, and `token` events streamed as nodes execute
+- **Redis run history backend** (`RedisRunHistory`) — stores run history in Redis
+  hashes with sorted sets for chronological and session-based ordering; eliminates
+  the need for a SQLite PVC when `MEMORY_BACKEND=redis`
+- **PostgreSQL run history backend** (`PostgresRunHistory`) — stores run history in a
+  `run_history` table with native JSONB session filtering
+- `create_run_history(settings)` factory in `core/memory.py` — auto-selects the
+  matching backend with graceful fallback to SQLite
+- `RunHistoryStore` protocol for type-safe backend interchangeability
+- Terraform: private cluster endpoints for all three clouds
+  - EKS: `endpoint_private_access = true`, configurable `public_access_cidrs`
+  - GKE: `private_cluster_config` + `master_authorized_networks_config`
+  - AKS: `api_server_access_profile` with `authorized_ip_ranges`
+- Terraform: dedicated VPC for EKS (replaces default VPC) with private/public
+  subnets, NAT Gateway, and proper route tables
+- Prometheus metrics: `llm_request_duration_seconds` (Histogram) and
+  `llm_tokens_total` (Counter by direction) in `_invoke_llm_with_retry`
+- `contextvars.copy_context()` in `_run_in_executor` — request_id now propagates
+  into thread pool workers for log correlation
+- Helm NetworkPolicy: namespace-scoped ingress + egress rules (DNS + HTTPS),
+  enabled by default in `values.prod.yaml`
+- 7 unit tests for `extract_text_content` (multi-modal, list, fallback paths)
+- 6 `pytest-asyncio` tests for SSE streaming with `httpx.AsyncClient`
+- 2 tests for Mock LLM provider
 - Terraform module for Azure AKS (`infra/terraform/modules/aks/`) with Log Analytics
   workspace, auto-scaling node pool, System-Assigned Managed Identity, and Helm chart
   deployment
@@ -15,24 +45,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   AzureRM 4.x) and `redis_url` variables
 - `redis_url` variable added to EKS and GKE modules/entry points for secret parity
   with AKS
-- Azure Blob Storage backend example in `infra/terraform/versions.tf`
-- AKS section in `infra/terraform/terraform.tfvars.example`
 
 ### Changed
+- **BREAKING (SSE):** `/run/stream` event types changed:
+  - `agent_switch` → `phase_started` + `phase_completed` (emitted in real time)
+  - New `token` event type for LLM token-level streaming
 - **BREAKING (Terraform):** Provider version bumps across all modules:
-  - `hashicorp/azurerm` `~> 3.0` → `~> 4.0` (AKS: `enable_auto_scaling` renamed to
-    `auto_scaling_enabled`, `subscription_id` now mandatory)
-  - `hashicorp/aws` `~> 5.0` → `~> 6.0` (enhanced per-resource `region` support)
+  - `hashicorp/azurerm` `~> 3.0` → `~> 4.0`
+  - `hashicorp/aws` `~> 5.0` → `~> 6.0`
   - `hashicorp/google` `~> 5.0` → `~> 7.0`
-  - `hashicorp/helm` `~> 2.12` → `~> 3.1` (`set` blocks replaced by list-of-objects
-    syntax, `kubernetes` block uses nested object `= {}`)
-  - `hashicorp/kubernetes` `~> 2.25` → `~> 3.0` (`kubernetes_namespace` →
-    `kubernetes_namespace_v1`, `kubernetes_secret` → `kubernetes_secret_v1`)
-- Terraform root directory is no longer a deployable module — each cloud has its own
-  entry point (`gke/`, `eks/`, `aks/`)
-- Root `outputs.tf` and `variables.tf` converted to documentation-only files
-- Kubernetes secret resource name unified to `langgraph_secrets` across all three modules
-- README "Infrastructure as Code" section rewritten for per-cloud entry-point layout
+  - `hashicorp/helm` `~> 2.12` → `~> 3.1`
+  - `hashicorp/kubernetes` `~> 2.25` → `~> 3.0`
+- CORS fail-closed in production: no wildcard unless `CORS_ORIGINS` is explicitly set
+- `/docs` and `/redoc` disabled when `ENVIRONMENT=production`
+- Rate limiter initialisation moved from import time to lifespan (no Redis
+  connection on import)
+- `thread_pool_max_workers` default raised from 4 to 8
+- `_extract_text_content` renamed to `extract_text_content` (public API)
+- `to_dict()` on dataclasses uses `dataclasses.asdict()` instead of manual dict
+- `vars(report)` replaced with `report.to_dict()` for consistency
+- `except AgentError` narrowed to `except (AgentExecutionError, AgentTimeoutError,
+  AgentValidationError)` — `AgentConfigurationError` now propagates to the caller
+- `MultiAgentGraph._get_executor()` uses double-checked locking
+- `MultiAgentGraph.close()` uses `wait=True` and resets `_executor = None`
+- `_NoOpTracer` singleton cached at module level
+- `_safe_eval` return type narrowed from `Any` to `int | float`
+- Trivy CI action pinned to SHA (`@6e7b7d1f...`) instead of `@master`
+- Redis default password removed from `docker-compose.yml` — fails if
+  `REDIS_PASSWORD` not set
+- Terraform root directory converted to documentation-only (per-cloud entry points)
+
+### Fixed
+- **CRITICAL:** `request_id` lost in thread pool — `contextvars.copy_context()` now
+  propagates context variables into executor threads
+- **CRITICAL:** Race condition in `MultiAgentGraph._get_executor()` — concurrent
+  `arun()` calls could create multiple thread pools
+- **CRITICAL:** `_run_in_executor` silently fell back to unbounded default executor
+  when `_executor is None` — now raises `RuntimeError`
+- **CRITICAL:** Resource leak in `_stream_pipeline` — `MultiAgentGraph` was not
+  closed via context manager, leaking the internal `ThreadPoolExecutor`
+- `type: ignore[union-attr]` in `analyst.py` replaced with proper
+  `extract_text_content()` call for multi-modal LLM content
+- ConversationMemory warning for non-SQLite backends changed to `logger.info` with
+  actionable persistence guidance
 
 ## [0.3.0] - 2026-04-02
 

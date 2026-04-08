@@ -675,12 +675,17 @@ def test_run_stream_done_event_has_required_fields(test_client: TestClient) -> N
 
 
 def test_run_stream_timeout_returns_error_event() -> None:
-    """When MultiAgentGraph.run raises AgentTimeoutError, SSE emits an error event."""
+    """When stream_events raises AgentTimeoutError, SSE emits an error event."""
     from core.security import RateLimiter
 
     permissive = RateLimiter(max_requests=10_000, window_seconds=60.0)
+
+    async def _error_stream(query):
+        raise AgentTimeoutError("Step budget exceeded")
+        yield  # pragma: no cover
+
     mock_graph_instance = MagicMock()
-    mock_graph_instance.run.side_effect = AgentTimeoutError("Step budget exceeded")
+    mock_graph_instance.stream_events = _error_stream
     mock_graph_cls = MagicMock(return_value=mock_graph_instance)
 
     with (
@@ -780,12 +785,17 @@ def test_drain_middleware_allows_ready_during_shutdown() -> None:
 
 
 def test_run_stream_agent_execution_error_emits_error_event() -> None:
-    """When MultiAgentGraph.run raises AgentExecutionError, SSE emits an error event."""
+    """When stream_events raises AgentExecutionError, SSE emits an error event."""
     from core.security import RateLimiter
 
     permissive = RateLimiter(max_requests=10_000, window_seconds=60.0)
+
+    async def _error_stream(query):
+        raise AgentExecutionError("Research node failed")
+        yield  # pragma: no cover
+
     mock_graph_instance = MagicMock()
-    mock_graph_instance.run.side_effect = AgentExecutionError("Research node failed")
+    mock_graph_instance.stream_events = _error_stream
     mock_graph_cls = MagicMock(return_value=mock_graph_instance)
 
     with (
@@ -820,9 +830,13 @@ def test_run_stream_active_pipelines_gauge_decremented_on_error() -> None:
 
     permissive = RateLimiter(max_requests=10_000, window_seconds=60.0)
 
+    async def _error_stream(query):
+        raise AgentExecutionError("forced failure")
+        yield  # pragma: no cover
+
     mock_gauge = MagicMock()
     mock_graph_instance = MagicMock()
-    mock_graph_instance.run.side_effect = AgentExecutionError("forced failure")
+    mock_graph_instance.stream_events = _error_stream
     mock_graph_cls = MagicMock(return_value=mock_graph_instance)
 
     with (
@@ -847,9 +861,7 @@ def test_run_stream_active_pipelines_gauge_decremented_on_success() -> None:
 
     permissive = RateLimiter(max_requests=10_000, window_seconds=60.0)
 
-    mock_gauge = MagicMock()
-    mock_graph_instance = MagicMock()
-    mock_graph_instance.run.return_value = MagicMock(
+    mock_report = MagicMock(
         executive_summary="s",
         key_insights=[],
         patterns=[],
@@ -858,6 +870,17 @@ def test_run_stream_active_pipelines_gauge_decremented_on_success() -> None:
         research_summary="r",
         to_dict=MagicMock(return_value={}),
     )
+
+    async def _success_stream(query):
+        yield {"event": "phase_started", "data": {"phase": "research"}}
+        yield {"event": "phase_completed", "data": {"phase": "research"}}
+        yield {"event": "phase_started", "data": {"phase": "analysis"}}
+        yield {"event": "phase_completed", "data": {"phase": "analysis"}}
+        yield {"event": "pipeline_completed", "data": {"report": mock_report}}
+
+    mock_gauge = MagicMock()
+    mock_graph_instance = MagicMock()
+    mock_graph_instance.stream_events = _success_stream
     mock_graph_cls = MagicMock(return_value=mock_graph_instance)
 
     with (

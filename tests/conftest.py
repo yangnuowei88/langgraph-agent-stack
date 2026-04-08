@@ -79,6 +79,19 @@ def mock_analysis_report() -> AnalysisReport:
 # ---------------------------------------------------------------------------
 
 
+def _make_mock_stream_events(report: AnalysisReport):
+    """Build an async generator function mimicking ``MultiAgentGraph.stream_events``."""
+
+    async def stream_events(query: str):
+        yield {"event": "phase_started", "data": {"phase": "research"}}
+        yield {"event": "phase_completed", "data": {"phase": "research"}}
+        yield {"event": "phase_started", "data": {"phase": "analysis"}}
+        yield {"event": "phase_completed", "data": {"phase": "analysis"}}
+        yield {"event": "pipeline_completed", "data": {"report": report}}
+
+    return stream_events
+
+
 @pytest.fixture(scope="function")
 def test_client(
     mock_research_result: ResearchResult,
@@ -91,7 +104,8 @@ def test_client(
     and side effects are isolated between tests.
 
     Patches applied:
-    - ``api.main.MultiAgentGraph`` — ``run()`` returns ``mock_analysis_report``.
+    - ``api.main.MultiAgentGraph`` — ``run()`` returns ``mock_analysis_report``,
+      ``stream_events()`` yields real-time pipeline events.
     - ``api.main.ResearchAgent``   — ``run_structured()`` returns ``mock_research_result``.
     - ``api.main._rate_limiter``   — replaced with a permissive limiter (max 10 000
       requests) so individual endpoint tests are never blocked.
@@ -102,6 +116,7 @@ def test_client(
 
     mock_graph_instance = MagicMock()
     mock_graph_instance.run.return_value = mock_analysis_report
+    mock_graph_instance.stream_events = _make_mock_stream_events(mock_analysis_report)
     mock_graph_instance.__enter__ = MagicMock(return_value=mock_graph_instance)
     mock_graph_instance.__exit__ = MagicMock(return_value=False)
 

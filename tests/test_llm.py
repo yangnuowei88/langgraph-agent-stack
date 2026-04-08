@@ -225,6 +225,24 @@ class TestGetLlmImportErrors:
 # ---------------------------------------------------------------------------
 
 
+class TestGetLlmMock:
+    """Mock provider should work without any API key."""
+
+    def test_returns_fake_model(self):
+        config = LLMConfig(provider="mock")
+        llm = get_llm(config)
+        assert llm is not None
+
+    def test_mock_returns_string_response(self):
+        config = LLMConfig(provider="mock")
+        llm = get_llm(config)
+        from langchain_core.messages import HumanMessage
+
+        result = llm.invoke([HumanMessage(content="test")])
+        assert isinstance(result.content, str)
+        assert len(result.content) > 0
+
+
 class TestLLMConfigDefaults:
     """Verify LLMConfig provides sensible defaults."""
 

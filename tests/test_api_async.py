@@ -49,8 +49,17 @@ def _make_mock_app():
         research_summary="research",
         to_dict=MagicMock(return_value={}),
     )
+
+    async def _success_stream(query):
+        yield {"event": "phase_started", "data": {"phase": "research"}}
+        yield {"event": "phase_completed", "data": {"phase": "research"}}
+        yield {"event": "phase_started", "data": {"phase": "analysis"}}
+        yield {"event": "phase_completed", "data": {"phase": "analysis"}}
+        yield {"event": "pipeline_completed", "data": {"report": mock_report}}
+
     mock_graph_instance = MagicMock()
     mock_graph_instance.run.return_value = mock_report
+    mock_graph_instance.stream_events = _success_stream
     mock_graph_instance.close.return_value = None
     mock_graph_cls = MagicMock(return_value=mock_graph_instance)
 
@@ -145,8 +154,13 @@ async def test_stream_timeout_error_emits_error_event() -> None:
 
     _reset_module_state()
     permissive = RateLimiter(max_requests=10_000, window_seconds=60.0)
+
+    async def _error_stream(query):
+        raise AgentTimeoutError("budget exceeded")
+        yield  # pragma: no cover
+
     mock_graph = MagicMock()
-    mock_graph.run.side_effect = AgentTimeoutError("budget exceeded")
+    mock_graph.stream_events = _error_stream
     mock_graph.close.return_value = None
 
     with (
@@ -180,8 +194,13 @@ async def test_stream_execution_error_emits_error_event() -> None:
 
     _reset_module_state()
     permissive = RateLimiter(max_requests=10_000, window_seconds=60.0)
+
+    async def _error_stream(query):
+        raise AgentExecutionError("node failed")
+        yield  # pragma: no cover
+
     mock_graph = MagicMock()
-    mock_graph.run.side_effect = AgentExecutionError("node failed")
+    mock_graph.stream_events = _error_stream
     mock_graph.close.return_value = None
 
     with (

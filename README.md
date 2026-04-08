@@ -126,6 +126,7 @@ Set `LLM_PROVIDER` in your `.env` and install the matching extra. Provider-speci
 | AWS Bedrock | `bedrock` | `uv sync --extra bedrock` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` |
 | Azure OpenAI | `azure` | `uv sync --extra openai` | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT` |
 | Ollama (local) | `ollama` | `uv sync --extra ollama` | None — runs locally |
+| **Mock (dev)** | `mock` | None — included in langchain-core | None — deterministic responses |
 
 ### Switching providers
 
@@ -148,6 +149,12 @@ OLLAMA_MODEL=llama3.2
 ```bash
 uv sync --extra ollama
 ```
+
+**Mock (no API key, deterministic responses for development/CI):**
+```env
+LLM_PROVIDER=mock
+```
+No extra installation needed — the mock provider uses `FakeListChatModel` from langchain-core.
 
 Agents never import provider-specific code directly. `core/llm.py` resolves the provider at startup via `get_llm()`, so switching is a one-line `.env` change with no code modifications.
 
@@ -342,18 +349,28 @@ curl -X POST http://localhost:8000/run/stream \
   -d '{"query": "Latest AI advances"}'
 ```
 
-Events are delivered as Server-Sent Events:
+Events are delivered as Server-Sent Events in real time via `MultiAgentGraph.stream_events()` (backed by LangGraph's `astream_events` API):
 
 ```
 data: {"type": "status", "message": "Starting pipeline..."}
+data: {"type": "phase_started", "phase": "research"}
 data: {"type": "phase_completed", "phase": "research"}
+data: {"type": "phase_started", "phase": "analysis"}
+data: {"type": "token", "content": "The", "node": "analysis_node"}
 data: {"type": "phase_completed", "phase": "analysis"}
 data: {"type": "done", "run_id": "...", "session_id": "...", "confidence": 0.87, ...}
 ```
 
-> **Note:** `phase_completed` events are emitted *after* `MultiAgentGraph.run()` completes (batch). They are progress markers, not real-time execution milestones.
+| Event type | Description |
+|------------|-------------|
+| `status` | Progress message emitted at the start of the stream |
+| `phase_started` | A pipeline phase has begun executing |
+| `phase_completed` | A pipeline phase has finished |
+| `token` | An LLM token chunk (real-time streaming when the provider supports it) |
+| `done` | Final result with the full analysis report and traceability metadata |
+| `error` | Terminal error event |
 
-The stream enforces a wall-clock timeout controlled by `STREAM_TIMEOUT_SECONDS` (default 120s). On timeout, a `{"type": "error", "message": "The pipeline timed out. Try a simpler query."}` event is emitted.
+The stream enforces a wall-clock timeout controlled by `STREAM_TIMEOUT_SECONDS` (default 120s). On timeout, a `{"type": "error", "message": "..."}` event is emitted.
 
 ---
 
@@ -477,7 +494,7 @@ All configuration is loaded from environment variables. Copy `.env.example` to `
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LLM_PROVIDER` | `anthropic` | LLM provider: `anthropic`, `openai`, `google`, `bedrock`, `azure`, `ollama` |
+| `LLM_PROVIDER` | `anthropic` | LLM provider: `anthropic`, `openai`, `google`, `bedrock`, `azure`, `ollama`, `mock` |
 | `MEMORY_BACKEND` | `sqlite` | Checkpoint backend: `sqlite`, `redis`, `postgres` |
 | `ENVIRONMENT` | `development` | Deployment label: `development`, `staging`, `production` |
 | `LOG_LEVEL` | `INFO` | Logging verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
@@ -704,7 +721,7 @@ langgraph-agent-stack/
 
 ### Change the LLM provider
 
-Set `LLM_PROVIDER` in `.env` to one of: `anthropic`, `openai`, `google`, `bedrock`, `azure`, `ollama`.
+Set `LLM_PROVIDER` in `.env` to one of: `anthropic`, `openai`, `google`, `bedrock`, `azure`, `ollama`, `mock`.
 Install the matching extra: `uv sync --extra <provider>` (Azure uses the `openai` extra).
 No code changes required — `core/llm.py` handles instantiation.
 

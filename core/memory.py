@@ -5,46 +5,43 @@ This module centralises all persistence concerns:
 
 * ``create_checkpointer`` — factory that returns the appropriate LangGraph
   ``BaseCheckpointSaver`` based on ``Settings.memory_backend``.
-* ``ConversationMemory`` — thin persistence layer for run-level history stored
-  in a SQLite ``runs`` table.  Keeps a full audit trail of every agent
-  invocation without coupling to the LangGraph checkpoint format.
+* ``ConversationMemory`` — run-level history stored in a SQLite ``runs``
+  table (default / fallback backend).
+* ``RedisRunHistory`` — run-level history stored in Redis hashes + sorted
+  sets.  Used when ``MEMORY_BACKEND=redis`` and the ``redis`` package is
+  installed.
+* ``PostgresRunHistory`` — run-level history stored in a ``run_history``
+  PostgreSQL table.  Used when ``MEMORY_BACKEND=postgres`` and ``psycopg``
+  is installed.
+* ``create_run_history`` — factory that returns the appropriate run history
+  store based on ``Settings.memory_backend``.
 
 Backend matrix
 --------------
 +-------------------+-------------------------------+---------------------------+
-| ``memory_backend``| Checkpointer                  | Notes                     |
+| ``memory_backend``| Checkpointer                  | Run history store         |
 +===================+===============================+===========================+
-| ``sqlite``        | ``SqliteSaver``               | Requires                  |
-|                   |                               | ``langgraph-checkpoint-   |
-|                   |                               | sqlite`` package.         |
+| ``sqlite``        | ``SqliteSaver``               | ``ConversationMemory``    |
 +-------------------+-------------------------------+---------------------------+
-| ``redis``         | ``RedisSaver``                | Requires                  |
-|                   |                               | ``langgraph-checkpoint-   |
-|                   |                               | redis`` package.          |
+| ``redis``         | ``RedisSaver``                | ``RedisRunHistory``       |
 +-------------------+-------------------------------+---------------------------+
-| ``postgres``      | ``PostgresSaver``             | Requires                  |
-|                   |                               | ``langgraph-checkpoint-   |
-|                   |                               | postgres`` package.       |
-|                   |                               | Install with:             |
-|                   |                               | ``uv sync --extra         |
-|                   |                               | postgres``                |
+| ``postgres``      | ``PostgresSaver``             | ``PostgresRunHistory``    |
 +-------------------+-------------------------------+---------------------------+
-| fallback / error  | ``MemorySaver``               | In-process only; loses    |
-|                   |                               | state on restart.         |
+| fallback / error  | ``MemorySaver``               | ``ConversationMemory``    |
 +-------------------+-------------------------------+---------------------------+
 
 Usage example::
 
-    from core.memory import create_checkpointer, ConversationMemory
-    from core.config import settings
+    from core.memory import create_checkpointer, create_run_history
+    from core.config import get_settings
 
+    settings = get_settings()
     checkpointer = create_checkpointer(settings)
+    history = create_run_history(settings)
 
-    memory = ConversationMemory(settings.sqlite_path)
-    with memory:
-        memory.save_run(run_id, query, result, metadata)
-        run = memory.get_run(run_id)
-        recent = memory.list_runs(limit=5)
+    history.save_run(run_id, query, result, metadata)
+    run = history.get_run(run_id)
+    recent = history.list_runs(limit=5)
 """
 
 from __future__ import annotations
@@ -58,7 +55,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from langgraph.checkpoint.memory import MemorySaver
 
@@ -285,7 +282,37 @@ def _create_postgres_checkpointer(postgres_url: str | None) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# ConversationMemory — run-history persistence
+# RunHistoryStore protocol
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class RunHistoryStore(Protocol):
+    """Protocol for run history storage backends."""
+
+    def save_run(
+        self,
+        run_id: str,
+        query: str,
+        result: dict[str, Any],
+        metadata: dict[str, Any] | None = None,
+    ) -> None: ...
+
+    def get_run(self, run_id: str) -> dict[str, Any] | None: ...
+
+    def list_runs(self, limit: int = 10) -> list[dict[str, Any]]: ...
+
+    def list_runs_by_session(
+        self, session_id: str, limit: int = 50
+    ) -> list[dict[str, Any]]: ...
+
+    def health_check(self) -> tuple[str, str]: ...
+
+    def close(self) -> None: ...
+
+
+# ---------------------------------------------------------------------------
+# ConversationMemory — SQLite run-history persistence
 # ---------------------------------------------------------------------------
 
 _DDL_RUNS = """
@@ -677,3 +704,323 @@ class ConversationMemory:
             "metadata": metadata,
             "created_at": row["created_at"],
         }
+
+
+# ---------------------------------------------------------------------------
+# RedisRunHistory — Redis-backed run-history persistence
+# ---------------------------------------------------------------------------
+
+
+class RedisRunHistory:
+    """Run history store backed by Redis.
+
+    Uses a Redis hash per run (``run:{run_id}``) and a sorted set
+    (``runs:timeline``) for chronological ordering.  Session filtering
+    uses a per-session sorted set (``runs:session:{session_id}``).
+    """
+
+    _KEY_PREFIX = "runhistory"
+
+    def __init__(self, redis_url: str) -> None:
+        try:
+            import redis as redis_lib
+        except ImportError:
+            raise ImportError(
+                "redis package is required for RedisRunHistory. "
+                "Install with: uv sync --extra redis"
+            )
+        self._redis = redis_lib.Redis.from_url(redis_url, decode_responses=True)
+        self._prefix = self._KEY_PREFIX
+        logger.info(
+            "RedisRunHistory initialised",
+            extra={"url": redis_url.split("@")[-1]},
+        )
+
+    def _run_key(self, run_id: str) -> str:
+        return f"{self._prefix}:run:{run_id}"
+
+    def _timeline_key(self) -> str:
+        return f"{self._prefix}:timeline"
+
+    def _session_key(self, session_id: str) -> str:
+        return f"{self._prefix}:session:{session_id}"
+
+    def save_run(
+        self,
+        run_id: str,
+        query: str,
+        result: dict[str, Any],
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        if not run_id or not run_id.strip():
+            raise ValueError("save_run: run_id must not be empty.")
+        if not query or not query.strip():
+            raise ValueError("save_run: query must not be empty.")
+
+        created_at = datetime.now(UTC).isoformat()
+        meta = metadata or {}
+        data = {
+            "run_id": run_id,
+            "query": query.strip(),
+            "result_json": json.dumps(result, ensure_ascii=False, default=str),
+            "metadata_json": json.dumps(meta, ensure_ascii=False, default=str),
+            "created_at": created_at,
+        }
+        pipe = self._redis.pipeline()
+        pipe.hset(self._run_key(run_id), mapping=data)
+        score = datetime.fromisoformat(created_at).timestamp()
+        pipe.zadd(self._timeline_key(), {run_id: score})
+        session_id = meta.get("session_id")
+        if session_id:
+            pipe.zadd(self._session_key(session_id), {run_id: score})
+        pipe.execute()
+
+    def get_run(self, run_id: str) -> dict[str, Any] | None:
+        data = self._redis.hgetall(self._run_key(run_id))
+        if not data:
+            return None
+        return self._decode(data)
+
+    def list_runs(self, limit: int = 10) -> list[dict[str, Any]]:
+        if limit < 1:
+            raise ValueError(f"list_runs: limit must be >= 1, got {limit}.")
+        run_ids = self._redis.zrevrange(self._timeline_key(), 0, limit - 1)
+        return [r for rid in run_ids if (r := self.get_run(rid)) is not None]
+
+    def list_runs_by_session(
+        self, session_id: str, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        if not session_id or not session_id.strip():
+            raise ValueError("list_runs_by_session: session_id must not be empty.")
+        if limit < 1:
+            raise ValueError(f"list_runs_by_session: limit must be >= 1, got {limit}.")
+        run_ids = self._redis.zrevrange(self._session_key(session_id), 0, limit - 1)
+        return [r for rid in run_ids if (r := self.get_run(rid)) is not None]
+
+    def health_check(self) -> tuple[str, str]:
+        try:
+            self._redis.ping()
+            return ("ok", "redis reachable")
+        except Exception as exc:
+            return ("degraded", f"redis unreachable: {exc}")
+
+    def close(self) -> None:
+        try:
+            self._redis.close()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _decode(data: dict[str, str]) -> dict[str, Any]:
+        try:
+            result = json.loads(data.get("result_json", "{}"))
+        except (json.JSONDecodeError, TypeError):
+            result = {}
+        try:
+            metadata = json.loads(data.get("metadata_json", "{}"))
+        except (json.JSONDecodeError, TypeError):
+            metadata = {}
+        return {
+            "id": data.get("run_id", ""),
+            "run_id": data.get("run_id", ""),
+            "query": data.get("query", ""),
+            "result": result,
+            "metadata": metadata,
+            "created_at": data.get("created_at", ""),
+        }
+
+
+# ---------------------------------------------------------------------------
+# PostgresRunHistory — PostgreSQL-backed run-history persistence
+# ---------------------------------------------------------------------------
+
+
+class PostgresRunHistory:
+    """Run history store backed by PostgreSQL.
+
+    Creates a ``run_history`` table (separate from LangGraph checkpoint
+    tables) and uses standard SQL for all queries.
+    """
+
+    _DDL = """
+    CREATE TABLE IF NOT EXISTS run_history (
+        id            SERIAL PRIMARY KEY,
+        run_id        TEXT NOT NULL UNIQUE,
+        query         TEXT NOT NULL,
+        result_json   TEXT NOT NULL DEFAULT '{}',
+        metadata_json TEXT NOT NULL DEFAULT '{}',
+        created_at    TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_run_history_created
+        ON run_history (created_at DESC);
+    """
+
+    def __init__(self, postgres_url: str) -> None:
+        try:
+            import psycopg
+        except ImportError:
+            raise ImportError(
+                "psycopg is required for PostgresRunHistory. "
+                "Install with: uv sync --extra postgres"
+            )
+        self._conn = psycopg.connect(postgres_url, autocommit=True)
+        self._lock = threading.Lock()
+        self._conn.execute(self._DDL)
+        logger.info(
+            "PostgresRunHistory initialised",
+            extra={"url": postgres_url.split("@")[-1]},
+        )
+
+    def save_run(
+        self,
+        run_id: str,
+        query: str,
+        result: dict[str, Any],
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        if not run_id or not run_id.strip():
+            raise ValueError("save_run: run_id must not be empty.")
+        if not query or not query.strip():
+            raise ValueError("save_run: query must not be empty.")
+
+        created_at = datetime.now(UTC).isoformat()
+        result_json = json.dumps(result, ensure_ascii=False, default=str)
+        metadata_json = json.dumps(metadata or {}, ensure_ascii=False, default=str)
+
+        with self._lock:
+            self._conn.execute(
+                """
+                INSERT INTO run_history (run_id, query, result_json, metadata_json, created_at)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (run_id) DO UPDATE SET
+                    query         = EXCLUDED.query,
+                    result_json   = EXCLUDED.result_json,
+                    metadata_json = EXCLUDED.metadata_json,
+                    created_at    = EXCLUDED.created_at
+                """,
+                (run_id, query.strip(), result_json, metadata_json, created_at),
+            )
+
+    def get_run(self, run_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT id, run_id, query, result_json, metadata_json, created_at "
+                "FROM run_history WHERE run_id = %s",
+                (run_id,),
+            )
+            row = cur.fetchone()
+        if row is None:
+            return None
+        return self._row_to_dict(row)
+
+    def list_runs(self, limit: int = 10) -> list[dict[str, Any]]:
+        if limit < 1:
+            raise ValueError(f"list_runs: limit must be >= 1, got {limit}.")
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT id, run_id, query, result_json, metadata_json, created_at "
+                "FROM run_history ORDER BY created_at DESC LIMIT %s",
+                (limit,),
+            )
+            rows = cur.fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
+    def list_runs_by_session(
+        self, session_id: str, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        if not session_id or not session_id.strip():
+            raise ValueError("list_runs_by_session: session_id must not be empty.")
+        if limit < 1:
+            raise ValueError(f"list_runs_by_session: limit must be >= 1, got {limit}.")
+        with self._lock:
+            cur = self._conn.execute(
+                "SELECT id, run_id, query, result_json, metadata_json, created_at "
+                "FROM run_history "
+                "WHERE metadata_json::jsonb->>'session_id' = %s "
+                "ORDER BY created_at DESC LIMIT %s",
+                (session_id, limit),
+            )
+            rows = cur.fetchall()
+        return [self._row_to_dict(row) for row in rows]
+
+    def health_check(self) -> tuple[str, str]:
+        try:
+            with self._lock:
+                self._conn.execute("SELECT 1").fetchone()
+            return ("ok", "postgres reachable")
+        except Exception as exc:
+            return ("degraded", f"postgres unreachable: {exc}")
+
+    def close(self) -> None:
+        try:
+            self._conn.close()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _row_to_dict(row: tuple) -> dict[str, Any]:
+        id_, run_id, query, result_json, metadata_json, created_at = row
+        try:
+            result = json.loads(result_json)
+        except (json.JSONDecodeError, TypeError):
+            result = {}
+        try:
+            metadata = json.loads(metadata_json)
+        except (json.JSONDecodeError, TypeError):
+            metadata = {}
+        return {
+            "id": id_,
+            "run_id": run_id,
+            "query": query,
+            "result": result,
+            "metadata": metadata,
+            "created_at": created_at,
+        }
+
+
+# ---------------------------------------------------------------------------
+# Run history factory
+# ---------------------------------------------------------------------------
+
+
+def create_run_history(
+    settings: Settings,
+) -> ConversationMemory | RedisRunHistory | PostgresRunHistory:
+    """Create the appropriate run history store based on settings.
+
+    When the memory backend is Redis or Postgres AND the required
+    packages are installed, run history is stored in the same backend.
+    Falls back to SQLite otherwise.
+
+    Args:
+        settings: Application settings.
+
+    Returns:
+        A run history store instance.
+    """
+    backend = settings.memory_backend
+
+    if backend == MemoryBackend.REDIS and settings.redis_url:
+        try:
+            return RedisRunHistory(settings.redis_url)
+        except (ImportError, Exception) as exc:
+            logger.warning(
+                "Failed to create RedisRunHistory, falling back to SQLite: %s",
+                exc,
+            )
+
+    if backend == MemoryBackend.POSTGRES and settings.postgres_url:
+        try:
+            return PostgresRunHistory(settings.postgres_url)
+        except (ImportError, Exception) as exc:
+            logger.warning(
+                "Failed to create PostgresRunHistory, falling back to SQLite: %s",
+                exc,
+            )
+
+    return ConversationMemory(
+        settings.sqlite_path,
+        backend=backend.value,
+        redis_url=settings.redis_url,
+        postgres_url=settings.postgres_url,
+    )

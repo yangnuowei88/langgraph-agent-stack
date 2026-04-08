@@ -8,12 +8,15 @@ Usage:
 
 from __future__ import annotations
 
+import json
 from typing import Literal
 
 from langchain_core.language_models import BaseChatModel
 from pydantic import BaseModel
 
-LLMProvider = Literal["anthropic", "openai", "google", "bedrock", "azure", "ollama"]
+LLMProvider = Literal[
+    "anthropic", "openai", "google", "bedrock", "azure", "ollama", "mock"
+]
 
 
 class LLMConfig(BaseModel):
@@ -56,6 +59,7 @@ def get_llm(config: LLMConfig) -> BaseChatModel:
         uv sync --extra bedrock
         uv sync --extra openai   (Azure uses the openai extra)
         uv sync --extra ollama
+        uv sync   (mock requires no extra — included in langchain-core)
 
     Args:
         config: An :class:`LLMConfig` instance describing which provider and
@@ -168,8 +172,51 @@ def get_llm(config: LLMConfig) -> BaseChatModel:
                 num_predict=config.max_tokens,
             )
 
+        case "mock":
+            from langchain_core.language_models.fake_chat_models import (
+                FakeListChatModel,
+            )
+
+            responses = [
+                # query expansion
+                json.dumps(["sub-query 1", "sub-query 2", "sub-query 3"]),
+                # search results (returned by tool, but LLM may be called)
+                json.dumps({"summary": "Mock research finding.", "confidence": 0.8}),
+                # validation
+                json.dumps({"sufficient": True, "reason": "Mock validation passed."}),
+                # summarise
+                json.dumps(
+                    {
+                        "summary": "Mock research summary based on findings.",
+                        "confidence": 0.85,
+                    }
+                ),
+                # analysis — insights
+                json.dumps(
+                    {
+                        "insights": [
+                            "Mock insight 1: Key trend identified.",
+                            "Mock insight 2: Pattern detected.",
+                        ],
+                        "confidence": 0.82,
+                    }
+                ),
+                # analysis — patterns
+                json.dumps(
+                    {
+                        "patterns": ["Mock pattern: Consistent growth."],
+                        "implications": [
+                            "Mock implication: Continued adoption expected."
+                        ],
+                    }
+                ),
+                # analysis — report
+                "Mock executive summary: The analysis reveals significant trends across the research domain.",
+            ]
+            return FakeListChatModel(responses=responses)
+
         case _:
             raise ValueError(
                 f"Unknown LLM provider: {config.provider!r}. "
-                "Valid providers: anthropic | openai | google | bedrock | azure | ollama"
+                "Valid providers: anthropic | openai | google | bedrock | azure | ollama | mock"
             )

@@ -23,6 +23,7 @@ import asyncio
 import logging
 import threading
 import uuid
+from collections.abc import AsyncGenerator
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Literal
 
@@ -416,6 +417,93 @@ class MultiAgentGraph:
         """
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self._get_executor(), self.run, query)
+
+    async def stream_events(self, query: str) -> AsyncGenerator[dict[str, Any], None]:
+        """Stream pipeline execution events in real time via LangGraph's event API.
+
+        Yields structured dicts with keys:
+            - ``event``: Event type (``phase_started``, ``phase_completed``,
+              ``token``, ``pipeline_completed``).
+            - ``data``: Event-specific payload.
+
+        Args:
+            query: The research question or topic to investigate.
+
+        Yields:
+            Event dicts as the pipeline progresses through nodes.
+
+        Raises:
+            AgentValidationError: When the query is empty.
+            AgentExecutionError: On pipeline failure.
+        """
+        if not query or not query.strip():
+            raise AgentValidationError(
+                "MultiAgentGraph.stream_events() requires a non-empty query."
+            )
+
+        initial_state: OrchestratorState = {
+            "query": query.strip(),
+            "research_result": None,
+            "analysis_report": None,
+            "error": None,
+            "status": "running",
+            "metadata": {"run_id": self.run_id},
+        }
+        config = {"configurable": {"thread_id": self.run_id}}
+
+        final_report: AnalysisReport | None = None
+
+        async for event in self._graph.astream_events(
+            initial_state, config=config, version="v2"
+        ):
+            kind = event.get("event", "")
+            name = event.get("name", "")
+
+            if kind == "on_chain_start" and name in (
+                "research_node",
+                "analysis_node",
+            ):
+                phase = "research" if name == "research_node" else "analysis"
+                yield {"event": "phase_started", "data": {"phase": phase}}
+
+            elif kind == "on_chain_end" and name in (
+                "research_node",
+                "analysis_node",
+            ):
+                phase = "research" if name == "research_node" else "analysis"
+                yield {"event": "phase_completed", "data": {"phase": phase}}
+
+                if name == "analysis_node":
+                    output = event.get("data", {}).get("output", {})
+                    report_dict = None
+                    if isinstance(output, dict):
+                        report_dict = output.get("analysis_report")
+                    if report_dict:
+                        try:
+                            final_report = AnalysisReport(**report_dict)
+                        except (TypeError, KeyError, ValueError):
+                            pass
+
+            elif kind == "on_chat_model_stream":
+                chunk = event.get("data", {}).get("chunk")
+                if chunk and hasattr(chunk, "content") and chunk.content:
+                    yield {
+                        "event": "token",
+                        "data": {
+                            "content": chunk.content,
+                            "node": event.get("metadata", {}).get("langgraph_node", ""),
+                        },
+                    }
+
+        if final_report is None:
+            raise AgentExecutionError(
+                "[MultiAgentGraph] Stream completed without an AnalysisReport."
+            )
+
+        yield {
+            "event": "pipeline_completed",
+            "data": {"report": final_report},
+        }
 
     def _get_executor(self) -> ThreadPoolExecutor:
         """Lazily create the thread pool on first async usage."""

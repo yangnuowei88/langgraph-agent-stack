@@ -61,7 +61,7 @@ from api.models import (
 )
 from core.config import Settings, get_settings
 from core.graph import MultiAgentGraph
-from core.memory import ConversationMemory, cleanup_checkpointer
+from core.memory import cleanup_checkpointer, create_run_history
 
 # ---------------------------------------------------------------------------
 # Logging — structured JSON via core.observability when available
@@ -86,12 +86,12 @@ logger = logging.getLogger(__name__)
 # Module-level state (populated during lifespan startup)
 # ---------------------------------------------------------------------------
 
-_APP_VERSION = "0.3.0"
+_APP_VERSION = "0.4.0"
 _start_time: float = 0.0
 _executor: ThreadPoolExecutor | None = None
 _shared_llm: BaseChatModel | None = None
 _shared_checkpointer: Any | None = None
-_shared_memory: ConversationMemory | None = None
+_shared_memory: Any = None
 
 # Security primitives — 60 requests per minute per IP is a conservative
 # default suited for an LLM pipeline where each request may take several
@@ -217,12 +217,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     init_tracing()
     _init_llm_and_checkpointer(_settings)
 
-    _shared_memory = ConversationMemory(
-        _settings.sqlite_path,
-        backend=_settings.memory_backend.value,
-        redis_url=_settings.redis_url,
-        postgres_url=_settings.postgres_url,
-    )
+    _shared_memory = create_run_history(_settings)
 
     logger.info(
         "API server starting up",
@@ -282,7 +277,7 @@ def get_shared_checkpointer() -> Any | None:
     return _shared_checkpointer
 
 
-def get_shared_memory() -> ConversationMemory | None:
+def get_shared_memory() -> Any:
     return _shared_memory
 
 
@@ -844,31 +839,19 @@ async def _stream_pipeline(
     session_id: str,
     run_id: str,
 ) -> AsyncGenerator[str, None]:
-    """
-    Async generator that executes the Research + Analysis pipeline and yields
-    SSE-formatted event strings.
+    """Async generator that streams the pipeline execution as SSE events.
 
-    Each yielded string is a complete SSE event of the form::
-
-        data: <json payload>\\n\\n
+    Uses ``MultiAgentGraph.stream_events()`` for real-time node
+    transitions and token streaming (when the LLM supports it).
 
     Event types emitted:
 
-    * ``status``           — Progress message (``{"type": "status", "message": "…"}``).
-    * ``phase_completed``  — Emitted **after** a pipeline phase finishes
-                             (``{"type": "phase_completed", "phase": "research"}``,
-                             then ``{"type": "phase_completed", "phase": "analysis"}``).
-                             These are **batch** completion markers, not real-time
-                             execution milestones.  ``MultiAgentGraph.run()`` is
-                             synchronous: both phases run inside a single blocking
-                             call.  For true token-level streaming, use
-                             ``graph.astream_events()`` with an async-native
-                             LangGraph configuration.
-    * ``done``             — Final success event with traceability metadata
-                             (``{"type": "done", "run_id": "…", "session_id": "…",
-                             "confidence": 0.87}``).
-    * ``error``            — Terminal error event
-                             (``{"type": "error", "message": "…"}``).
+    * ``status``          — Progress message.
+    * ``phase_started``   — A pipeline phase has begun executing.
+    * ``phase_completed`` — A pipeline phase has finished.
+    * ``token``           — An LLM token chunk (real-time streaming).
+    * ``done``            — Final result with traceability metadata.
+    * ``error``           — Terminal error event.
 
     Args:
         query: Validated user query string.
@@ -876,25 +859,40 @@ async def _stream_pipeline(
         run_id: Unique identifier for this pipeline run.
 
     Yields:
-        SSE-formatted strings ready to be sent as ``text/event-stream`` chunks.
+        SSE-formatted strings.
     """
     if active_pipelines is not None:
         active_pipelines.inc()
     try:
         yield f"data: {json.dumps({'type': 'status', 'message': 'Starting pipeline...'})}\n\n"
 
-        loop = asyncio.get_running_loop()
         llm = get_shared_llm()
         checkpointer = get_shared_checkpointer()
 
         pipeline = MultiAgentGraph(run_id=run_id, llm=llm, checkpointer=checkpointer)
+        report = None
+
         try:
-            report = await loop.run_in_executor(_executor, pipeline.run, query)
+            async for event in pipeline.stream_events(query):
+                kind = event["event"]
+
+                if kind == "phase_started":
+                    yield f"data: {json.dumps({'type': 'phase_started', 'phase': event['data']['phase']})}\n\n"
+
+                elif kind == "phase_completed":
+                    yield f"data: {json.dumps({'type': 'phase_completed', 'phase': event['data']['phase']})}\n\n"
+
+                elif kind == "token":
+                    yield f"data: {json.dumps({'type': 'token', 'content': event['data']['content'], 'node': event['data'].get('node', '')})}\n\n"
+
+                elif kind == "pipeline_completed":
+                    report = event["data"]["report"]
         finally:
             pipeline.close()
 
-        yield f"data: {json.dumps({'type': 'phase_completed', 'phase': 'research'})}\n\n"
-        yield f"data: {json.dumps({'type': 'phase_completed', 'phase': 'analysis'})}\n\n"
+        if report is None:
+            yield f"data: {json.dumps({'type': 'error', 'message': 'Pipeline completed without a report.'})}\n\n"
+            return
 
         logger.info(
             "POST /run/stream — pipeline completed",
@@ -906,6 +904,7 @@ async def _stream_pipeline(
         )
 
         if _shared_memory is not None:
+            loop = asyncio.get_running_loop()
             await loop.run_in_executor(
                 _executor,
                 functools.partial(
@@ -959,8 +958,9 @@ async def _stream_pipeline(
     tags=["Pipeline"],
     summary="Stream the full Research + Analysis pipeline as Server-Sent Events",
     response_description=(
-        "A text/event-stream response emitting status, phase_completed, done, "
-        "and error SSE events as the pipeline progresses."
+        "A text/event-stream response emitting status, phase_started, "
+        "phase_completed, token, done, and error SSE events in real time "
+        "as the pipeline progresses."
     ),
 )
 async def run_stream(
@@ -976,10 +976,15 @@ async def run_stream(
     1. ``ResearchAgent``  — expands the query and produces a ``ResearchResult``.
     2. ``AnalystAgent``   — consumes the research and produces an ``AnalysisReport``.
 
+    Events are streamed in real time via ``MultiAgentGraph.stream_events()``
+    which leverages LangGraph's ``astream_events`` API.
+
     SSE event types
     ---------------
     * ``status``          — ``{"type": "status", "message": "…"}``
+    * ``phase_started``   — ``{"type": "phase_started", "phase": "research"}``
     * ``phase_completed`` — ``{"type": "phase_completed", "phase": "research"}``
+    * ``token``           — ``{"type": "token", "content": "…", "node": "analysis_node"}``
     * ``done``            — ``{"type": "done", "run_id": "…", "session_id": "…", "confidence": 0.87}``
     * ``error``           — ``{"type": "error", "message": "…"}``
 
