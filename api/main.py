@@ -566,7 +566,9 @@ async def _run_in_executor(fn: Any, *args: Any) -> Any:
     try:
         loop = asyncio.get_running_loop()
         ctx = contextvars.copy_context()
-        return await loop.run_in_executor(_executor, ctx.run, fn, *args)
+        return await loop.run_in_executor(
+            _executor, functools.partial(ctx.run, fn, *args)
+        )
     finally:
         if active_pipelines is not None:
             active_pipelines.dec()

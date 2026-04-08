@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from agents.analyst import AnalysisReport
+from agents.base_agent import AgentExecutionError, AgentValidationError
 from agents.researcher import ResearchResult
 from core.graph import MultiAgentGraph
 
@@ -104,16 +105,12 @@ class TestMultiAgentGraphRun:
 
     def test_run_raises_on_empty_query(self) -> None:
         """Empty query should raise AgentValidationError immediately."""
-        from agents.base_agent import AgentValidationError
-
         graph = MultiAgentGraph()
         with pytest.raises(AgentValidationError):
             graph.run("   ")
 
     def test_run_raises_on_empty_string(self) -> None:
         """Empty string query should raise AgentValidationError."""
-        from agents.base_agent import AgentValidationError
-
         graph = MultiAgentGraph()
         with pytest.raises(AgentValidationError):
             graph.run("")
@@ -138,8 +135,6 @@ class TestMultiAgentGraphRun:
 class TestMultiAgentGraphErrors:
     def test_research_failure_raises_execution_error(self) -> None:
         """When ResearchAgent fails the pipeline should raise AgentExecutionError."""
-        from agents.base_agent import AgentExecutionError
-
         mock_research_agent = MagicMock()
         mock_research_agent.run_structured.side_effect = AgentExecutionError(
             "Research failed"
@@ -152,8 +147,6 @@ class TestMultiAgentGraphErrors:
 
     def test_analysis_not_called_when_research_fails(self) -> None:
         """When research fails, AnalystAgent should never be invoked."""
-        from agents.base_agent import AgentExecutionError
-
         mock_research_agent = MagicMock()
         mock_research_agent.run_structured.side_effect = AgentExecutionError("fail")
 
@@ -173,8 +166,6 @@ class TestMultiAgentGraphErrors:
         self, mock_research_result: ResearchResult
     ) -> None:
         """When AnalystAgent fails the pipeline should raise AgentExecutionError."""
-        from agents.base_agent import AgentExecutionError
-
         mock_research_agent = MagicMock()
         mock_research_agent.run_structured.return_value = mock_research_result
 
@@ -214,8 +205,6 @@ class TestMultiAgentGraphResearchOnly:
 
     def test_get_research_result_raises_on_empty_query(self) -> None:
         """Empty query should raise AgentValidationError."""
-        from agents.base_agent import AgentValidationError
-
         graph = MultiAgentGraph()
         with pytest.raises(AgentValidationError):
             graph.get_research_result("")
@@ -248,3 +237,172 @@ class TestMultiAgentGraphAsync:
 
         assert isinstance(report, AnalysisReport)
         assert report.query == "What is AI?"
+
+
+# ---------------------------------------------------------------------------
+# stream_events
+# ---------------------------------------------------------------------------
+
+
+async def _mock_events(events):
+    """Helper: turn a list of dicts into an async generator."""
+    for event in events:
+        yield event
+
+
+def _analysis_report_dict(**overrides):
+    """Build a valid analysis_report dict with sensible defaults."""
+    base = {
+        "query": "test query",
+        "executive_summary": "summary",
+        "key_insights": ["insight"],
+        "patterns": ["pattern"],
+        "implications": ["impl"],
+        "confidence": 0.85,
+        "research_summary": "research",
+    }
+    base.update(overrides)
+    return base
+
+
+class TestMultiAgentGraphStreamEvents:
+    """Tests for ``MultiAgentGraph.stream_events()``."""
+
+    @pytest.fixture()
+    def graph(self) -> MultiAgentGraph:
+        """Return a ``MultiAgentGraph`` with a real compiled graph."""
+        return MultiAgentGraph(run_id="test-stream")
+
+    @pytest.mark.asyncio
+    async def test_stream_events_raises_on_empty_query(self, graph):
+        """Empty / whitespace query must raise AgentValidationError."""
+        with pytest.raises(AgentValidationError):
+            async for _ in graph.stream_events(""):
+                pass
+
+        with pytest.raises(AgentValidationError):
+            async for _ in graph.stream_events("   "):
+                pass
+
+    @pytest.mark.asyncio
+    async def test_stream_events_yields_phase_events(self, graph):
+        """Phase start/end events for both nodes must be emitted."""
+        report_dict = _analysis_report_dict()
+        events = [
+            {"event": "on_chain_start", "name": "research_node", "data": {}},
+            {
+                "event": "on_chain_end",
+                "name": "research_node",
+                "data": {"output": {"research_result": {}}},
+            },
+            {"event": "on_chain_start", "name": "analysis_node", "data": {}},
+            {
+                "event": "on_chain_end",
+                "name": "analysis_node",
+                "data": {"output": {"analysis_report": report_dict}},
+            },
+        ]
+        graph._graph.astream_events = lambda *a, **kw: _mock_events(events)
+
+        collected = []
+        async for evt in graph.stream_events("test query"):
+            collected.append(evt)
+
+        event_types = [e["event"] for e in collected]
+        assert event_types.count("phase_started") == 2
+        assert event_types.count("phase_completed") == 2
+
+        phases = [
+            e["data"]["phase"] for e in collected if e["event"] == "phase_started"
+        ]
+        assert phases == ["research", "analysis"]
+
+    @pytest.mark.asyncio
+    async def test_stream_events_yields_token_events(self, graph):
+        """on_chat_model_stream events must surface as token events."""
+        mock_chunk = MagicMock()
+        mock_chunk.content = "hello"
+
+        report_dict = _analysis_report_dict()
+        events = [
+            {"event": "on_chain_start", "name": "research_node", "data": {}},
+            {
+                "event": "on_chat_model_stream",
+                "name": "llm",
+                "data": {"chunk": mock_chunk},
+                "metadata": {"langgraph_node": "research_node"},
+            },
+            {
+                "event": "on_chain_end",
+                "name": "research_node",
+                "data": {"output": {}},
+            },
+            {"event": "on_chain_start", "name": "analysis_node", "data": {}},
+            {
+                "event": "on_chain_end",
+                "name": "analysis_node",
+                "data": {"output": {"analysis_report": report_dict}},
+            },
+        ]
+        graph._graph.astream_events = lambda *a, **kw: _mock_events(events)
+
+        collected = []
+        async for evt in graph.stream_events("test query"):
+            collected.append(evt)
+
+        token_events = [e for e in collected if e["event"] == "token"]
+        assert len(token_events) == 1
+        assert token_events[0]["data"]["content"] == "hello"
+        assert token_events[0]["data"]["node"] == "research_node"
+
+    @pytest.mark.asyncio
+    async def test_stream_events_yields_pipeline_completed(self, graph):
+        """Final event must be pipeline_completed with the AnalysisReport."""
+        report_dict = _analysis_report_dict(confidence=0.92)
+        events = [
+            {"event": "on_chain_start", "name": "research_node", "data": {}},
+            {
+                "event": "on_chain_end",
+                "name": "research_node",
+                "data": {"output": {}},
+            },
+            {"event": "on_chain_start", "name": "analysis_node", "data": {}},
+            {
+                "event": "on_chain_end",
+                "name": "analysis_node",
+                "data": {"output": {"analysis_report": report_dict}},
+            },
+        ]
+        graph._graph.astream_events = lambda *a, **kw: _mock_events(events)
+
+        collected = []
+        async for evt in graph.stream_events("test query"):
+            collected.append(evt)
+
+        last = collected[-1]
+        assert last["event"] == "pipeline_completed"
+        assert isinstance(last["data"]["report"], AnalysisReport)
+        assert last["data"]["report"].confidence == 0.92
+
+    @pytest.mark.asyncio
+    async def test_stream_events_raises_when_no_report(self, graph):
+        """Missing analysis_report in output must raise AgentExecutionError."""
+        events = [
+            {"event": "on_chain_start", "name": "research_node", "data": {}},
+            {
+                "event": "on_chain_end",
+                "name": "research_node",
+                "data": {"output": {}},
+            },
+            {"event": "on_chain_start", "name": "analysis_node", "data": {}},
+            {
+                "event": "on_chain_end",
+                "name": "analysis_node",
+                "data": {"output": {}},
+            },
+        ]
+        graph._graph.astream_events = lambda *a, **kw: _mock_events(events)
+
+        with pytest.raises(AgentExecutionError, match="without an AnalysisReport"):
+            async for _ in graph.stream_events("test query"):
+                pass

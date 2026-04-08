@@ -7,14 +7,23 @@ temporary SQLite file that is deleted after the test completes.
 
 from __future__ import annotations
 
+import sys
 import tempfile
+import threading
 import uuid
 from pathlib import Path
 from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from core.memory import ConversationMemory
+from core.config import MemoryBackend
+from core.memory import (
+    ConversationMemory,
+    PostgresRunHistory,
+    RedisRunHistory,
+    create_run_history,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -332,3 +341,418 @@ def test_create_checkpointer_postgres_sync_with_setup():
         "postgresql+psycopg://u:p@localhost:5432/db"
     )
     mock_saver.setup.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# RedisRunHistory tests
+# ---------------------------------------------------------------------------
+
+
+class TestRedisRunHistory:
+    """Unit tests for RedisRunHistory with fully mocked redis."""
+
+    @staticmethod
+    def _make_store() -> tuple[RedisRunHistory, MagicMock]:
+        """Create a RedisRunHistory bypassing __init__, with a mock redis client."""
+        store = RedisRunHistory.__new__(RedisRunHistory)
+        mock_redis_instance = MagicMock()
+        store._redis = mock_redis_instance
+        store._prefix = "runhistory"
+        return store, mock_redis_instance
+
+    def test_save_and_get_run(self) -> None:
+        """save_run stores via pipeline; get_run decodes the hash."""
+        store, mock_redis = self._make_store()
+        mock_pipe = MagicMock()
+        mock_redis.pipeline.return_value = mock_pipe
+
+        store.save_run(
+            "run-1", "test query", {"summary": "result"}, {"session_id": "s1"}
+        )
+
+        mock_pipe.hset.assert_called_once()
+        assert mock_pipe.hset.call_args[0][0] == "runhistory:run:run-1"
+        assert mock_pipe.hset.call_args[1]["mapping"]["run_id"] == "run-1"
+        assert mock_pipe.zadd.call_count == 2  # timeline + session
+        mock_pipe.execute.assert_called_once()
+
+        mock_redis.hgetall.return_value = {
+            "run_id": "run-1",
+            "query": "test query",
+            "result_json": '{"summary": "result"}',
+            "metadata_json": '{"session_id": "s1"}',
+            "created_at": "2026-01-01T00:00:00+00:00",
+        }
+        result = store.get_run("run-1")
+        assert result is not None
+        assert result["run_id"] == "run-1"
+        assert result["result"]["summary"] == "result"
+        assert result["metadata"]["session_id"] == "s1"
+
+    def test_save_run_empty_run_id_raises(self) -> None:
+        store, _ = self._make_store()
+        with pytest.raises(ValueError, match="run_id must not be empty"):
+            store.save_run("", "some query", {})
+
+    def test_save_run_empty_query_raises(self) -> None:
+        store, _ = self._make_store()
+        with pytest.raises(ValueError, match="query must not be empty"):
+            store.save_run("run-1", "   ", {})
+
+    def test_list_runs(self) -> None:
+        """list_runs fetches IDs from timeline sorted set, then each hash."""
+        store, mock_redis = self._make_store()
+        mock_redis.zrevrange.return_value = ["run-2", "run-1"]
+
+        def hgetall_effect(key: str) -> dict[str, str]:
+            if "run-2" in key:
+                return {
+                    "run_id": "run-2",
+                    "query": "q2",
+                    "result_json": "{}",
+                    "metadata_json": "{}",
+                    "created_at": "2026-01-01T00:00:02",
+                }
+            if "run-1" in key:
+                return {
+                    "run_id": "run-1",
+                    "query": "q1",
+                    "result_json": "{}",
+                    "metadata_json": "{}",
+                    "created_at": "2026-01-01T00:00:01",
+                }
+            return {}
+
+        mock_redis.hgetall.side_effect = hgetall_effect
+
+        runs = store.list_runs(limit=10)
+        assert len(runs) == 2
+        assert runs[0]["run_id"] == "run-2"
+        assert runs[1]["run_id"] == "run-1"
+        mock_redis.zrevrange.assert_called_once_with("runhistory:timeline", 0, 9)
+
+    def test_list_runs_invalid_limit_raises(self) -> None:
+        store, _ = self._make_store()
+        with pytest.raises(ValueError, match="limit must be >= 1"):
+            store.list_runs(limit=0)
+
+    def test_list_runs_by_session(self) -> None:
+        """list_runs_by_session uses the per-session sorted set."""
+        store, mock_redis = self._make_store()
+        mock_redis.zrevrange.return_value = ["run-3", "run-1"]
+
+        def hgetall_effect(key: str) -> dict[str, str]:
+            if "run-3" in key:
+                return {
+                    "run_id": "run-3",
+                    "query": "q3",
+                    "result_json": "{}",
+                    "metadata_json": '{"session_id": "s1"}',
+                    "created_at": "2026-01-01T00:00:03",
+                }
+            if "run-1" in key:
+                return {
+                    "run_id": "run-1",
+                    "query": "q1",
+                    "result_json": "{}",
+                    "metadata_json": '{"session_id": "s1"}',
+                    "created_at": "2026-01-01T00:00:01",
+                }
+            return {}
+
+        mock_redis.hgetall.side_effect = hgetall_effect
+
+        runs = store.list_runs_by_session("s1")
+        assert len(runs) == 2
+        assert runs[0]["run_id"] == "run-3"
+        assert runs[1]["run_id"] == "run-1"
+        mock_redis.zrevrange.assert_called_once_with("runhistory:session:s1", 0, 49)
+
+    def test_list_runs_by_session_empty_session_raises(self) -> None:
+        store, _ = self._make_store()
+        with pytest.raises(ValueError, match="session_id must not be empty"):
+            store.list_runs_by_session("")
+
+    def test_get_run_not_found(self) -> None:
+        """hgetall returning empty dict means run does not exist."""
+        store, mock_redis = self._make_store()
+        mock_redis.hgetall.return_value = {}
+        result = store.get_run("nonexistent")
+        assert result is None
+
+    def test_health_check_ok(self) -> None:
+        store, mock_redis = self._make_store()
+        mock_redis.ping.return_value = True
+        status, detail = store.health_check()
+        assert status == "ok"
+        assert "reachable" in detail
+
+    def test_health_check_degraded(self) -> None:
+        store, mock_redis = self._make_store()
+        mock_redis.ping.side_effect = ConnectionError("connection refused")
+        status, detail = store.health_check()
+        assert status == "degraded"
+        assert "unreachable" in detail
+
+    def test_close(self) -> None:
+        store, mock_redis = self._make_store()
+        store.close()
+        mock_redis.close.assert_called_once()
+
+    def test_decode_corrupted_json(self) -> None:
+        """_decode falls back to empty dicts when JSON is malformed."""
+        data = {
+            "run_id": "r1",
+            "query": "q",
+            "result_json": "{invalid",
+            "metadata_json": "not-json",
+            "created_at": "2026-01-01",
+        }
+        result = RedisRunHistory._decode(data)
+        assert result["result"] == {}
+        assert result["metadata"] == {}
+        assert result["run_id"] == "r1"
+
+    def test_list_runs_by_session_invalid_limit_raises(self) -> None:
+        store, _ = self._make_store()
+        with pytest.raises(ValueError, match="limit must be >= 1"):
+            store.list_runs_by_session("s1", limit=0)
+
+    def test_close_exception_swallowed(self) -> None:
+        """close() silently swallows exceptions from the redis client."""
+        store, mock_redis = self._make_store()
+        mock_redis.close.side_effect = ConnectionError("already closed")
+        store.close()  # must not raise
+
+    def test_import_error(self) -> None:
+        """Instantiation raises ImportError when redis is not installed."""
+        with patch.dict(sys.modules, {"redis": None}):
+            with pytest.raises(ImportError, match="redis package is required"):
+                RedisRunHistory("redis://localhost:6379/0")
+
+
+# ---------------------------------------------------------------------------
+# PostgresRunHistory tests
+# ---------------------------------------------------------------------------
+
+
+class TestPostgresRunHistory:
+    """Unit tests for PostgresRunHistory with fully mocked psycopg."""
+
+    @staticmethod
+    def _make_store() -> tuple[PostgresRunHistory, MagicMock]:
+        """Create a PostgresRunHistory bypassing __init__, with a mock connection."""
+        store = PostgresRunHistory.__new__(PostgresRunHistory)
+        mock_conn = MagicMock()
+        store._conn = mock_conn
+        store._lock = threading.Lock()
+        return store, mock_conn
+
+    def test_save_and_get_run(self) -> None:
+        """save_run inserts via execute; get_run fetches a tuple row."""
+        store, mock_conn = self._make_store()
+
+        store.save_run(
+            "run-1", "test query", {"summary": "result"}, {"session_id": "s1"}
+        )
+
+        mock_conn.execute.assert_called_once()
+        sql = mock_conn.execute.call_args[0][0]
+        assert "INSERT INTO run_history" in sql
+
+        mock_conn.execute.reset_mock()
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = (
+            1,
+            "run-1",
+            "test query",
+            '{"summary": "result"}',
+            '{"session_id": "s1"}',
+            "2026-01-01T00:00:00+00:00",
+        )
+        mock_conn.execute.return_value = mock_cursor
+
+        result = store.get_run("run-1")
+        assert result is not None
+        assert result["run_id"] == "run-1"
+        assert result["result"]["summary"] == "result"
+        assert result["metadata"]["session_id"] == "s1"
+
+    def test_save_run_empty_run_id_raises(self) -> None:
+        store, _ = self._make_store()
+        with pytest.raises(ValueError, match="run_id must not be empty"):
+            store.save_run("", "some query", {})
+
+    def test_save_run_empty_query_raises(self) -> None:
+        store, _ = self._make_store()
+        with pytest.raises(ValueError, match="query must not be empty"):
+            store.save_run("run-1", "   ", {})
+
+    def test_list_runs(self) -> None:
+        """list_runs returns rows ordered by created_at DESC."""
+        store, mock_conn = self._make_store()
+        mock_cursor = MagicMock()
+        mock_cursor.fetchall.return_value = [
+            (2, "run-2", "q2", "{}", "{}", "2026-01-01T00:00:02"),
+            (1, "run-1", "q1", "{}", "{}", "2026-01-01T00:00:01"),
+        ]
+        mock_conn.execute.return_value = mock_cursor
+
+        runs = store.list_runs(limit=10)
+        assert len(runs) == 2
+        assert runs[0]["run_id"] == "run-2"
+        assert runs[1]["run_id"] == "run-1"
+
+    def test_list_runs_invalid_limit_raises(self) -> None:
+        store, _ = self._make_store()
+        with pytest.raises(ValueError, match="limit must be >= 1"):
+            store.list_runs(limit=0)
+
+    def test_list_runs_by_session(self) -> None:
+        """list_runs_by_session filters via SQL on session_id."""
+        store, mock_conn = self._make_store()
+        mock_cursor = MagicMock()
+        mock_cursor.fetchall.return_value = [
+            (3, "run-3", "q3", "{}", '{"session_id": "s1"}', "2026-01-01T00:00:03"),
+            (1, "run-1", "q1", "{}", '{"session_id": "s1"}', "2026-01-01T00:00:01"),
+        ]
+        mock_conn.execute.return_value = mock_cursor
+
+        runs = store.list_runs_by_session("s1")
+        assert len(runs) == 2
+        assert all(r["metadata"]["session_id"] == "s1" for r in runs)
+
+    def test_list_runs_by_session_empty_session_raises(self) -> None:
+        store, _ = self._make_store()
+        with pytest.raises(ValueError, match="session_id must not be empty"):
+            store.list_runs_by_session("")
+
+    def test_get_run_not_found(self) -> None:
+        """fetchone returning None means run does not exist."""
+        store, mock_conn = self._make_store()
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = None
+        mock_conn.execute.return_value = mock_cursor
+
+        result = store.get_run("nonexistent")
+        assert result is None
+
+    def test_health_check_ok(self) -> None:
+        store, mock_conn = self._make_store()
+        mock_cursor = MagicMock()
+        mock_cursor.fetchone.return_value = (1,)
+        mock_conn.execute.return_value = mock_cursor
+
+        status, detail = store.health_check()
+        assert status == "ok"
+        assert "reachable" in detail
+
+    def test_health_check_degraded(self) -> None:
+        store, mock_conn = self._make_store()
+        mock_conn.execute.side_effect = Exception("connection refused")
+
+        status, detail = store.health_check()
+        assert status == "degraded"
+        assert "unreachable" in detail
+
+    def test_close(self) -> None:
+        store, mock_conn = self._make_store()
+        store.close()
+        mock_conn.close.assert_called_once()
+
+    def test_row_to_dict_corrupted_json(self) -> None:
+        """_row_to_dict falls back to empty dicts when JSON is malformed."""
+        row = (1, "run-1", "query", "{bad", "not-json", "2026-01-01")
+        result = PostgresRunHistory._row_to_dict(row)
+        assert result["result"] == {}
+        assert result["metadata"] == {}
+        assert result["run_id"] == "run-1"
+
+    def test_list_runs_by_session_invalid_limit_raises(self) -> None:
+        store, _ = self._make_store()
+        with pytest.raises(ValueError, match="limit must be >= 1"):
+            store.list_runs_by_session("s1", limit=0)
+
+    def test_close_exception_swallowed(self) -> None:
+        """close() silently swallows exceptions from the psycopg connection."""
+        store, mock_conn = self._make_store()
+        mock_conn.close.side_effect = Exception("already closed")
+        store.close()  # must not raise
+
+    def test_import_error(self) -> None:
+        """Instantiation raises ImportError when psycopg is not installed."""
+        with patch.dict(sys.modules, {"psycopg": None}):
+            with pytest.raises(ImportError, match="psycopg is required"):
+                PostgresRunHistory("postgresql://localhost:5432/db")
+
+
+# ---------------------------------------------------------------------------
+# create_run_history factory tests
+# ---------------------------------------------------------------------------
+
+
+class TestCreateRunHistory:
+    """Unit tests for the create_run_history factory function."""
+
+    def test_sqlite_backend_returns_conversation_memory(self, tmp_path: Any) -> None:
+        settings = MagicMock()
+        settings.memory_backend = MemoryBackend.SQLITE
+        settings.sqlite_path = str(tmp_path / "test.db")
+        settings.redis_url = None
+        settings.postgres_url = None
+
+        result = create_run_history(settings)
+        assert isinstance(result, ConversationMemory)
+        result.close()
+
+    def test_redis_backend_returns_redis_history(self) -> None:
+        mock_redis_mod = MagicMock()
+
+        settings = MagicMock()
+        settings.memory_backend = MemoryBackend.REDIS
+        settings.redis_url = "redis://localhost:6379/0"
+
+        with patch.dict(sys.modules, {"redis": mock_redis_mod}):
+            result = create_run_history(settings)
+
+        assert isinstance(result, RedisRunHistory)
+        result.close()
+
+    def test_postgres_backend_returns_postgres_history(self) -> None:
+        mock_psycopg_mod = MagicMock()
+
+        settings = MagicMock()
+        settings.memory_backend = MemoryBackend.POSTGRES
+        settings.postgres_url = "postgresql://localhost:5432/db"
+
+        with patch.dict(sys.modules, {"psycopg": mock_psycopg_mod}):
+            result = create_run_history(settings)
+
+        assert isinstance(result, PostgresRunHistory)
+        result.close()
+
+    def test_redis_backend_fallback_on_import_error(self, tmp_path: Any) -> None:
+        settings = MagicMock()
+        settings.memory_backend = MemoryBackend.REDIS
+        settings.redis_url = "redis://localhost:6379/0"
+        settings.sqlite_path = str(tmp_path / "fallback.db")
+        settings.postgres_url = None
+
+        with patch.dict(sys.modules, {"redis": None}):
+            result = create_run_history(settings)
+
+        assert isinstance(result, ConversationMemory)
+        result.close()
+
+    def test_postgres_backend_fallback_on_import_error(self, tmp_path: Any) -> None:
+        settings = MagicMock()
+        settings.memory_backend = MemoryBackend.POSTGRES
+        settings.redis_url = None
+        settings.postgres_url = "postgresql://localhost:5432/db"
+        settings.sqlite_path = str(tmp_path / "fallback.db")
+
+        with patch.dict(sys.modules, {"psycopg": None}):
+            result = create_run_history(settings)
+
+        assert isinstance(result, ConversationMemory)
+        result.close()
