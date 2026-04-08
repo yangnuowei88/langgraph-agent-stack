@@ -808,7 +808,10 @@ def test_run_stream_agent_execution_error_emits_error_event() -> None:
         and json.loads(line.strip()[6:]).get("type") == "error"
     ]
     assert len(error_events) >= 1, "Expected at least one 'error' SSE event"
-    assert "error" in error_events[0]["message"].lower() or "pipeline" in error_events[0]["message"].lower()
+    assert (
+        "error" in error_events[0]["message"].lower()
+        or "pipeline" in error_events[0]["message"].lower()
+    )
 
 
 def test_run_stream_active_pipelines_gauge_decremented_on_error() -> None:
