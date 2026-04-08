@@ -322,15 +322,16 @@ class ConversationMemory:
 
     When ``backend`` is ``"redis"`` or ``"postgres"``, the SQLite store is
     still used for run history (lightweight audit trail) while the main
-    checkpointer is handled by :func:`create_checkpointer`.  A warning is
-    logged so operators know the audit DB differs from the checkpoint store.
+    checkpointer is handled by :func:`create_checkpointer`.  An informational
+    log explains persistence options so operators know the audit DB differs
+    from the checkpoint store.
 
     Args:
         db_path: Filesystem path to the SQLite database.  The parent
             directory is created automatically.
         backend: The configured memory backend name.  Only used for
-            logging a warning when the run-history store diverges from
-            the checkpoint backend.
+            logging when the run-history store diverges from the checkpoint
+            backend.
         redis_url: Optional Redis URL (logged for diagnostics).
         postgres_url: Optional Postgres DSN (logged for diagnostics).
 
@@ -350,12 +351,15 @@ class ConversationMemory:
         postgres_url: str | None = None,
     ) -> None:
         if backend not in ("sqlite",):
-            logger.warning(
-                "ConversationMemory run-history always uses SQLite; "
-                "checkpoint backend is '%s'. Run history and checkpoint "
-                "stores are separate.",
+            logger.info(
+                "ConversationMemory run-history uses a local SQLite file "
+                "('%s') while the checkpoint backend is '%s'.  To persist "
+                "run history across pod restarts, ensure the SQLite path is "
+                "backed by a PersistentVolume.  Alternatively, set "
+                "sqlite_path=':memory:' if run history can be ephemeral.",
+                db_path,
                 backend,
-                extra={"backend": backend},
+                extra={"backend": backend, "db_path": db_path},
             )
 
         if db_path == ":memory:":

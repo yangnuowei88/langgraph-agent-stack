@@ -5,6 +5,11 @@
 # ---------------------------------------------------------------------------
 # 1. Google provider
 # ---------------------------------------------------------------------------
+# NOTE: Provider declarations in modules is a Terraform anti-pattern that
+# prevents using count/for_each on the module call.  This is acceptable here
+# because each cloud module is used as a standalone root module via its
+# entry-point directory (e.g. infra/terraform/gke/).  If you need to compose
+# multiple cloud modules in a single root, refactor providers to the root.
 provider "google" {
   project = var.project_id
   region  = var.region
@@ -26,12 +31,33 @@ resource "google_container_cluster" "main" {
     workload_pool = "${var.project_id}.svc.id.goog"
   }
 
+  private_cluster_config {
+    enable_private_nodes    = true
+    enable_private_endpoint = false
+    master_ipv4_cidr_block  = var.master_ipv4_cidr_block
+  }
+
+  master_authorized_networks_config {
+    dynamic "cidr_blocks" {
+      for_each = var.master_authorized_cidrs
+      content {
+        cidr_block   = cidr_blocks.value.cidr_block
+        display_name = cidr_blocks.value.display_name
+      }
+    }
+  }
+
   deletion_protection = var.environment == "prod" ? true : false
 }
 
 # ---------------------------------------------------------------------------
 # 3. Kubernetes provider — uses GKE cluster credentials
 # ---------------------------------------------------------------------------
+# NOTE: Provider declarations in modules is a Terraform anti-pattern that
+# prevents using count/for_each on the module call.  This is acceptable here
+# because each cloud module is used as a standalone root module via its
+# entry-point directory (e.g. infra/terraform/gke/).  If you need to compose
+# multiple cloud modules in a single root, refactor providers to the root.
 provider "kubernetes" {
   host                   = "https://${google_container_cluster.main.endpoint}"
   token                  = data.google_client_config.current.access_token

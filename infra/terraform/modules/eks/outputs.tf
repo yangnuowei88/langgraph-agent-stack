@@ -32,3 +32,8 @@ output "irsa_role_arn" {
   description = "ARN of the IAM role bound to the langgraph Kubernetes service account via IRSA."
   value       = aws_iam_role.langgraph_irsa.arn
 }
+
+output "vpc_id" {
+  description = "ID of the dedicated VPC."
+  value       = aws_vpc.main.id
+}

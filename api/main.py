@@ -93,14 +93,11 @@ _shared_llm: BaseChatModel | None = None
 _shared_checkpointer: Any | None = None
 _shared_memory: ConversationMemory | None = None
 
-# Security primitives — instantiated once, shared across all requests.
-# 60 requests per minute per IP is a conservative default suited for an LLM
-# pipeline where each request may take several seconds.  Adjust via subclassing
-# or by passing a custom RateLimiter instance in tests.
-_rate_limiter = create_rate_limiter(
-    backend=get_settings().rate_limit_backend,
-    redis_url=get_settings().redis_url,
-)
+# Security primitives — 60 requests per minute per IP is a conservative
+# default suited for an LLM pipeline where each request may take several
+# seconds.  The rate limiter is initialised in lifespan() so importing this
+# module does NOT trigger a Redis connection (fixing side-effects-at-import).
+_rate_limiter: Any = None
 _input_validator = InputValidator(max_length=2000)
 _shutting_down = threading.Event()
 
@@ -189,10 +186,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         * Gracefully shuts down the thread pool, waiting for in-flight tasks.
     """
     global _start_time, _executor, _shared_llm, _shared_checkpointer, _shared_memory
+    global _rate_limiter
 
     _start_time = time.monotonic()
 
     _settings = get_settings()
+
+    if _rate_limiter is None:
+        _rate_limiter = create_rate_limiter(
+            backend=_settings.rate_limit_backend,
+            redis_url=_settings.redis_url,
+        )
 
     if _settings.memory_backend.value == "postgres" and not _settings.postgres_url:
         raise RuntimeError(
@@ -449,7 +453,7 @@ async def rate_limit_middleware(request: Request, call_next: Any) -> Any:
         return await call_next(request)
 
     client_ip: str = request.client.host if request.client else "unknown"
-    if not _rate_limiter.is_allowed(client_ip):
+    if _rate_limiter is not None and not _rate_limiter.is_allowed(client_ip):
         logger.warning(
             "Rate limit exceeded",
             extra={"client": client_ip, "path": request.url.path},
@@ -850,22 +854,21 @@ async def _stream_pipeline(
 
     Event types emitted:
 
-    * ``status``       — Progress message (``{"type": "status", "message": "…"}``).
-    * ``agent_switch`` — Transition between agents
-                         (``{"type": "agent_switch", "from": "…", "to": "…"}``).
-
-    Note:
-        ``agent_switch`` events are emitted after pipeline completion
-        (``MultiAgentGraph.run()`` is synchronous).  They are progress
-        indicators, not real-time execution milestones.  For true
-        real-time token streaming, use ``graph.astream_events()`` with
-        an async-native LangGraph configuration.
-
-    * ``done``         — Final success event with traceability metadata
-                         (``{"type": "done", "run_id": "…", "session_id": "…",
-                         "confidence": 0.87}``).
-    * ``error``        — Terminal error event
-                         (``{"type": "error", "message": "…"}``).
+    * ``status``           — Progress message (``{"type": "status", "message": "…"}``).
+    * ``phase_completed``  — Emitted **after** a pipeline phase finishes
+                             (``{"type": "phase_completed", "phase": "research"}``,
+                             then ``{"type": "phase_completed", "phase": "analysis"}``).
+                             These are **batch** completion markers, not real-time
+                             execution milestones.  ``MultiAgentGraph.run()`` is
+                             synchronous: both phases run inside a single blocking
+                             call.  For true token-level streaming, use
+                             ``graph.astream_events()`` with an async-native
+                             LangGraph configuration.
+    * ``done``             — Final success event with traceability metadata
+                             (``{"type": "done", "run_id": "…", "session_id": "…",
+                             "confidence": 0.87}``).
+    * ``error``            — Terminal error event
+                             (``{"type": "error", "message": "…"}``).
 
     Args:
         query: Validated user query string.
@@ -884,15 +887,14 @@ async def _stream_pipeline(
         llm = get_shared_llm()
         checkpointer = get_shared_checkpointer()
 
-        yield f"data: {json.dumps({'type': 'agent_switch', 'from': 'orchestrator', 'to': 'researcher'})}\n\n"
-
         pipeline = MultiAgentGraph(run_id=run_id, llm=llm, checkpointer=checkpointer)
         try:
             report = await loop.run_in_executor(_executor, pipeline.run, query)
         finally:
             pipeline.close()
 
-        yield f"data: {json.dumps({'type': 'agent_switch', 'from': 'researcher', 'to': 'analyst'})}\n\n"
+        yield f"data: {json.dumps({'type': 'phase_completed', 'phase': 'research'})}\n\n"
+        yield f"data: {json.dumps({'type': 'phase_completed', 'phase': 'analysis'})}\n\n"
 
         logger.info(
             "POST /run/stream — pipeline completed",
@@ -957,7 +959,7 @@ async def _stream_pipeline(
     tags=["Pipeline"],
     summary="Stream the full Research + Analysis pipeline as Server-Sent Events",
     response_description=(
-        "A text/event-stream response emitting status, agent_switch, done, "
+        "A text/event-stream response emitting status, phase_completed, done, "
         "and error SSE events as the pipeline progresses."
     ),
 )
@@ -976,10 +978,10 @@ async def run_stream(
 
     SSE event types
     ---------------
-    * ``status``       — ``{"type": "status", "message": "…"}``
-    * ``agent_switch`` — ``{"type": "agent_switch", "from": "researcher", "to": "analyst"}``
-    * ``done``         — ``{"type": "done", "run_id": "…", "session_id": "…", "confidence": 0.87}``
-    * ``error``        — ``{"type": "error", "message": "…"}``
+    * ``status``          — ``{"type": "status", "message": "…"}``
+    * ``phase_completed`` — ``{"type": "phase_completed", "phase": "research"}``
+    * ``done``            — ``{"type": "done", "run_id": "…", "session_id": "…", "confidence": 0.87}``
+    * ``error``           — ``{"type": "error", "message": "…"}``
 
     Args:
         body: Request body containing the ``query`` string and optional ``session_id``.

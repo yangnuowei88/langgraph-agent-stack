@@ -83,3 +83,13 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+# ---------------------------------------------------------------------------
+# API server access
+# ---------------------------------------------------------------------------
+
+variable "authorized_ip_ranges" {
+  description = "IP CIDRs allowed to reach the AKS API server. Empty list = unrestricted."
+  type        = list(string)
+  default     = []
+}

@@ -346,10 +346,12 @@ Events are delivered as Server-Sent Events:
 
 ```
 data: {"type": "status", "message": "Starting pipeline..."}
-data: {"type": "agent_switch", "from": "orchestrator", "to": "researcher"}
-data: {"type": "agent_switch", "from": "researcher", "to": "analyst"}
+data: {"type": "phase_completed", "phase": "research"}
+data: {"type": "phase_completed", "phase": "analysis"}
 data: {"type": "done", "run_id": "...", "session_id": "...", "confidence": 0.87, ...}
 ```
+
+> **Note:** `phase_completed` events are emitted *after* `MultiAgentGraph.run()` completes (batch). They are progress markers, not real-time execution milestones.
 
 The stream enforces a wall-clock timeout controlled by `STREAM_TIMEOUT_SECONDS` (default 120s). On timeout, a `{"type": "error", "message": "The pipeline timed out. Try a simpler query."}` event is emitted.
 

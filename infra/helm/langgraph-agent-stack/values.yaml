@@ -39,9 +39,11 @@ config:
   maxTokens: "4096"
   rateLimitBackend: "memory"  # "redis" requis pour multi-replica (partage l'état entre pods)
 
-# Persistent storage for SQLite data (only relevant when memoryBackend=sqlite).
-# Persistent storage for SQLite run-history.  Enabled by default so that
-# data survives pod restarts.  When disabled, an emptyDir is used instead.
+# PersistentVolume for /app/data (default sqlitePath).  With memoryBackend=sqlite,
+# this stores both checkpoints and run history.  With redis/postgres, checkpoints
+# live in the external service but run history still uses SQLite at sqlitePath —
+# enable persistence here if you need that audit trail across pod restarts; with
+# persistence.enabled=false, emptyDir is expected (run history is ephemeral).
 persistence:
   enabled: true
   mountPath: /app/data

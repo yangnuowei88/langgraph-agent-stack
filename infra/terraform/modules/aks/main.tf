@@ -5,6 +5,11 @@
 # ---------------------------------------------------------------------------
 # 1. Azure provider
 # ---------------------------------------------------------------------------
+# NOTE: Provider declarations in modules is a Terraform anti-pattern that
+# prevents using count/for_each on the module call.  This is acceptable here
+# because each cloud module is used as a standalone root module via its
+# entry-point directory (e.g. infra/terraform/aks/).  If you need to compose
+# multiple cloud modules in a single root, refactor providers to the root.
 provider "azurerm" {
   features {}
   subscription_id = var.subscription_id
@@ -88,6 +93,10 @@ resource "azurerm_kubernetes_cluster" "main" {
     log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
   }
 
+  api_server_access_profile {
+    authorized_ip_ranges = var.authorized_ip_ranges
+  }
+
   tags = var.tags
 
   lifecycle {
@@ -100,6 +109,11 @@ resource "azurerm_kubernetes_cluster" "main" {
 # ---------------------------------------------------------------------------
 # 5. Kubernetes provider — uses AKS cluster credentials
 # ---------------------------------------------------------------------------
+# NOTE: Provider declarations in modules is a Terraform anti-pattern that
+# prevents using count/for_each on the module call.  This is acceptable here
+# because each cloud module is used as a standalone root module via its
+# entry-point directory (e.g. infra/terraform/aks/).  If you need to compose
+# multiple cloud modules in a single root, refactor providers to the root.
 provider "kubernetes" {
   host                   = azurerm_kubernetes_cluster.main.kube_config[0].host
   client_certificate     = base64decode(azurerm_kubernetes_cluster.main.kube_config[0].client_certificate)

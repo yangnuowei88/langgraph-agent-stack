@@ -96,3 +96,19 @@ variable "node_desired_size" {
   type        = number
   default     = 2
 }
+
+# ---------------------------------------------------------------------------
+# Networking
+# ---------------------------------------------------------------------------
+
+variable "vpc_cidr" {
+  description = "CIDR block for the dedicated VPC."
+  type        = string
+  default     = "10.0.0.0/16"
+}
+
+variable "public_access_cidrs" {
+  description = "CIDRs allowed to reach the EKS API server publicly. Use [\"0.0.0.0/0\"] only for dev."
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
+}

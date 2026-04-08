@@ -32,6 +32,8 @@ module "aks" {
   redis_url           = var.redis_url
   llm_provider        = var.llm_provider
 
+  authorized_ip_ranges = var.authorized_ip_ranges
+
   tags = {
     environment = var.environment
     project     = "langgraph-agent-stack"

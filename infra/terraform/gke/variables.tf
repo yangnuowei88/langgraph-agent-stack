@@ -61,3 +61,25 @@ variable "llm_provider" {
   type        = string
   default     = "anthropic"
 }
+
+# ---------------------------------------------------------------------------
+# Private cluster & network access
+# ---------------------------------------------------------------------------
+
+variable "master_ipv4_cidr_block" {
+  description = "CIDR block for the GKE master's private IP range."
+  type        = string
+  default     = "172.16.0.0/28"
+}
+
+variable "master_authorized_cidrs" {
+  description = "CIDRs allowed to reach the GKE API server."
+  type = list(object({
+    cidr_block   = string
+    display_name = string
+  }))
+  default = [{
+    cidr_block   = "0.0.0.0/0"
+    display_name = "all (restrict in production)"
+  }]
+}
