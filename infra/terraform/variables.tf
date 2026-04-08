@@ -1,15 +1,15 @@
 # ---------------------------------------------------------------------------
-# Global variables — shared across GKE and EKS modules
+# Global variables — shared across GKE, EKS, and AKS modules
 # ---------------------------------------------------------------------------
 
 variable "cloud_provider" {
-  description = "Target cloud provider for the cluster. Accepted values: 'gke' or 'eks'."
+  description = "Target cloud provider for the cluster. Accepted values: 'gke', 'eks', or 'azure'."
   type        = string
   default     = "gke"
 
   validation {
-    condition     = contains(["gke", "eks"], var.cloud_provider)
-    error_message = "cloud_provider must be 'gke' or 'eks'."
+    condition     = contains(["gke", "eks", "azure"], var.cloud_provider)
+    error_message = "cloud_provider must be 'gke', 'eks', or 'azure'."
   }
 }
 
@@ -40,6 +40,13 @@ variable "llm_provider" {
   default     = "anthropic"
 }
 
+variable "redis_url" {
+  description = "Redis connection URL (optional). Required when config.rateLimitBackend = 'redis'."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 # ---------------------------------------------------------------------------
 # Kubernetes / Helm
 # ---------------------------------------------------------------------------
@@ -54,6 +61,12 @@ variable "helm_chart_path" {
   description = "Relative or absolute path to the langgraph-agent-stack Helm chart directory."
   type        = string
   default     = "../helm/langgraph-agent-stack"
+}
+
+variable "node_count" {
+  description = "Initial number of nodes (used by AKS; EKS uses node_desired_size)."
+  type        = number
+  default     = 2
 }
 
 # ---------------------------------------------------------------------------
@@ -92,4 +105,32 @@ variable "eks_cluster_name" {
   description = "Name of the EKS cluster."
   type        = string
   default     = "langgraph-cluster"
+}
+
+# ---------------------------------------------------------------------------
+# AKS-specific variables
+# ---------------------------------------------------------------------------
+
+variable "azure_resource_group" {
+  description = "Azure Resource Group name. Required when cloud_provider = 'azure'."
+  type        = string
+  default     = "langgraph-rg"
+}
+
+variable "azure_location" {
+  description = "Azure region for the AKS cluster (e.g. canadaeast, eastus)."
+  type        = string
+  default     = "canadaeast"
+}
+
+variable "azure_cluster_name" {
+  description = "Name of the AKS cluster."
+  type        = string
+  default     = "langgraph-cluster"
+}
+
+variable "azure_node_vm_size" {
+  description = "Azure VM size for AKS nodes."
+  type        = string
+  default     = "Standard_D2s_v3"
 }

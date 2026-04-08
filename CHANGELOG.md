@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Terraform module for Azure AKS (`infra/terraform/modules/aks/`) with Log Analytics
+  workspace, auto-scaling node pool, System-Assigned Managed Identity, and Helm chart
+  deployment
+- `environments/azure.dev.tfvars` and `environments/azure.prod.tfvars` for AKS
+- Root Terraform `cloud_provider` validation updated to accept `"azure"` alongside
+  `"gke"` and `"eks"`
 
 ## [0.3.0] - 2026-04-02
 

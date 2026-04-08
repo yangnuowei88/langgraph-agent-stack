@@ -229,9 +229,9 @@ In production, set `secrets.existingSecret` to point to a secret managed by the 
 
 ## Infrastructure as Code
 
-Terraform modules for GKE (Autopilot) and EKS in `infra/terraform/`.
+Terraform modules for GKE (Autopilot), EKS, and AKS in `infra/terraform/`.
 
-> **Important:** By default, Terraform state is stored locally. For production or team use, configure a remote backend (GCS or S3) in `infra/terraform/versions.tf` before running `terraform apply`. See the comments in that file for instructions.
+> **Important:** By default, Terraform state is stored locally. For production or team use, configure a remote backend (GCS, S3, or Azure Blob) in `infra/terraform/versions.tf` before running `terraform apply`. See the comments in that file for instructions.
 
 ```bash
 cd infra/terraform
@@ -246,6 +246,29 @@ terraform apply -var-file=environments/dev.tfvars \
 terraform apply -var-file=environments/dev.tfvars \
   -var="cloud_provider=eks" \
   -var="anthropic_api_key=$ANTHROPIC_API_KEY"
+```
+
+### Azure AKS
+
+**Prerequisites**: Azure CLI authenticated (`az login`), Terraform >= 1.6.
+
+```bash
+cd infra/terraform
+
+# Development
+terraform init
+terraform apply -var-file=environments/azure.dev.tfvars \
+  -var="anthropic_api_key=$ANTHROPIC_API_KEY"
+
+# Production
+terraform apply -var-file=environments/azure.prod.tfvars \
+  -var="anthropic_api_key=$ANTHROPIC_API_KEY" \
+  -var="redis_url=$REDIS_URL"
+
+# Get kubeconfig
+terraform output -raw kube_config > ~/.kube/config-aks
+export KUBECONFIG=~/.kube/config-aks
+kubectl get pods -n langgraph-agents
 ```
 
 ## API Reference
@@ -626,7 +649,7 @@ langgraph-agent-stack/
 │   ├── Dockerfile          # Multi-stage build (builder + non-root runtime)
 │   ├── docker-compose.yml  # Local stack with optional Redis profile
 │   ├── helm/               # Helm chart for Kubernetes deployment
-│   └── terraform/          # Terraform modules for GKE Autopilot and EKS
+│   └── terraform/          # Terraform modules for GKE Autopilot, EKS, and AKS
 ├── examples/
 │   ├── sequential/         # Linear Research → Analysis pipeline
 │   ├── parallel/           # Three analysts running simultaneously
