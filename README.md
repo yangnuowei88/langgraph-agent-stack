@@ -58,10 +58,12 @@ User Query
 |-----------|------|----------------|
 | `ResearchAgent` | `agents/researcher.py` | Expands queries into sub-queries, retrieves information snippets, validates quality |
 | `AnalystAgent` | `agents/analyst.py` | Consumes research findings, extracts insights, identifies patterns, produces a structured report |
-| `MultiAgentGraph` | `core/graph.py` | LangGraph orchestrator that sequences the two agents with shared state |
+| `ResearchAnalysisPack` | `domain_packs/research_analysis/pack.py` | Domain pack that owns the LangGraph graph (Research → Analysis); registered in `PackRegistry` |
+| `MultiAgentGraph` | `core/graph.py` | Backward-compat alias for `ResearchAnalysisPack` (shim only — new orchestration belongs in a domain pack) |
+| `PackRegistry` | `platform/registry.py` | Explicit registration of domain packs and versions (`platform/__init__.py` registers built-ins at import) |
 | `ConversationMemory` | `core/memory.py` | Pluggable checkpoint backend (SQLite, Redis, or PostgreSQL) |
 | `core/security.py` | `core/security.py` | Input validation, per-IP rate limiting, log sanitization |
-| `api/main.py` | `api/main.py` | FastAPI application with lifespan management and thread pool offloading |
+| `api/main.py` | `api/main.py` | FastAPI application with lifespan, legacy `/run` routes, and pack routes derived from the registry |
 
 ## What's New in v0.5.0
 
@@ -197,6 +199,8 @@ docker build \
 ```
 
 The compose file reads your `.env` file automatically. The application is available at `http://localhost:8000` after the health check passes (about 15 seconds on first startup).
+
+The runtime image copies `api/`, `core/`, `agents/`, `platform/`, `domain_packs/`, `connectors/`, and `control_plane/` into `/app` (see `infra/Dockerfile`). Omitting `platform/` or `domain_packs/` would break pack registration and the default pipeline.
 
 ## Kubernetes Deployment
 
@@ -626,16 +630,17 @@ uv run pytest -m integration -v
 | `tests/test_config.py` | `get_settings()` caching, `llm_config` property, cross-field validators |
 | `tests/test_observability.py` | Structured logging and OpenTelemetry tracing tests |
 
-### Lint and format
+### Lint, format, and typecheck
 
 ```bash
 uv run ruff check .          # lint
 uv run ruff check . --fix    # lint + auto-fix
 uv run black .               # format
 uv run black --check .       # format check (CI mode)
+uv run pyright               # typecheck (CI job)
 ```
 
-Both checks run automatically in CI on every push and pull request via `.github/workflows/ci.yml`. Security scanning (gitleaks, bandit, dependency audit) runs via `.github/workflows/security.yml`.
+Ruff, Black, pyright, and pytest run in CI (see `.github/workflows/ci.yml` for optional docker-smoke and integration jobs). Security scanning (gitleaks, bandit, dependency audit) runs via `.github/workflows/security.yml`.
 
 ### Makefile shortcuts
 
@@ -681,6 +686,14 @@ make clean         # Remove build artifacts and caches
 
 ```
 langgraph-agent-stack/
+├── platform/
+│   ├── base_pack.py        # BaseDomainPack contract; PackRegistry in registry.py
+│   └── __init__.py         # Registers built-in packs at import time
+├── domain_packs/
+│   └── research_analysis/
+│       └── pack.py         # ResearchAnalysisPack — default Research → Analysis graph
+├── connectors/             # Optional retrieval adapters (foundation)
+├── control_plane/          # Policy types (foundation)
 ├── agents/
 │   ├── base_agent.py       # Abstract BaseAgent, error types, retry logic
 │   ├── models.py           # ResearchResult and AnalysisReport dataclasses
@@ -688,7 +701,7 @@ langgraph-agent-stack/
 │   └── analyst.py          # AnalystAgent — insight extraction, pattern detection, reporting
 ├── core/
 │   ├── config.py           # Pydantic-settings Settings model; use get_settings() not Settings()
-│   ├── graph.py            # MultiAgentGraph — LangGraph orchestrator and state definition
+│   ├── graph.py            # Shim — MultiAgentGraph = ResearchAnalysisPack (compat imports)
 │   ├── llm.py              # get_llm() — provider-agnostic LLM instantiation
 │   ├── memory.py           # ConversationMemory — SQLite / Redis / PostgreSQL checkpointing
 │   ├── observability.py    # Structured JSON logging and optional OpenTelemetry tracing
@@ -711,7 +724,7 @@ langgraph-agent-stack/
 ├── tests/                  # Unit tests (mocked) + real backend integration tests
 ├── docs/                   # Additional documentation (security, architecture)
 ├── .github/workflows/
-│   ├── ci.yml              # ruff + black + pytest on push/PR
+│   ├── ci.yml              # ruff + black + pyright + pytest (+ optional jobs)
 │   └── security.yml        # gitleaks, bandit, dependency audit
 ├── .dockerignore           # Excludes .env, .git, tests, docs from Docker context
 ├── Makefile                # Developer shortcuts (make test, make lint, etc.)
@@ -724,8 +737,10 @@ langgraph-agent-stack/
 ### Add a new agent
 
 1. Create `agents/my_agent.py` inheriting from `BaseAgent` in `agents/base_agent.py`. Implement `build_graph()` and `run()`. Add `run_structured()` if you need typed output (it is not abstract).
-2. Add your agent as a node in `core/graph.py` and connect its edges in the LangGraph state graph.
-3. Expose it via a new endpoint in `api/main.py` following the pattern used by `/research`.
+2. Wire the agent into the LangGraph **inside the relevant domain pack** (for the default pipeline, edit `domain_packs/research_analysis/pack.py` — add nodes and edges there). Do not put new orchestration logic in `core/graph.py`; that file remains a backward-compatibility shim.
+3. If you add a **new** domain pack, register it explicitly in `platform/__init__.py` (see `PackRegistry.register`) and declare schemas if you want typed pack routes.
+4. Expose behavior via existing pack routes (registry-driven) or add a dedicated endpoint in `api/main.py` following the `/research` pattern for a standalone agent.
+5. Add or extend tests (e.g. `tests/test_agents.py`, pack tests); agent patches in tests still target `core.graph` for compatibility — see `CLAUDE.md` Gotchas.
 
 ### Change the LLM provider
 
@@ -748,7 +763,7 @@ No code changes required — `core/llm.py` handles instantiation.
 
 > **Note:** Setting `RAG_ENABLED=true` currently provisions the vector store
 > infrastructure (ChromaDB or PGVector) but does **not** wire it into agent
-> pipelines. Full RAG integration is planned for **v0.4.0**.
+> pipelines by default. Wiring RAG into a pack or agent is a separate integration step.
 
 1. Set `RAG_ENABLED=true` in your environment.
 2. Install the RAG extras: `uv sync --extra rag`.

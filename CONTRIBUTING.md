@@ -149,6 +149,7 @@ Branch names must be lowercase with hyphens — no underscores, no uppercase.
    ```bash
    uv run ruff check .
    uv run black --check .
+   uv run pyright
    uv run pytest
    ```
 
@@ -164,11 +165,11 @@ Branch names must be lowercase with hyphens — no underscores, no uppercase.
 
 ## Adding a New Agent
 
-1. Create `agents/my_agent.py` inheriting from `BaseAgent` in `agents/base_agent.py`.
-2. Implement `run()` and `run_structured()`.
-3. Add the agent as a node in `core/graph.py` and wire its edges.
-4. Expose it via a new endpoint in `api/main.py`, following the `/research` pattern.
-5. Add tests in `tests/test_agents.py`.
+1. Create `agents/my_agent.py` inheriting from `BaseAgent` in `agents/base_agent.py`. Implement `build_graph()`, `run()`, and optionally `run_structured()`.
+2. Integrate the agent into the LangGraph for your pipeline — typically by editing the domain pack under `domain_packs/<your_pack>/pack.py` (for the built-in pipeline, `domain_packs/research_analysis/pack.py`). Avoid adding orchestration to `core/graph.py`; it aliases `ResearchAnalysisPack` for backward compatibility only.
+3. For a **new** domain pack: subclass `BaseDomainPack`, register it in `platform/__init__.py` via `PackRegistry.register`, and optionally provide `input_schema` / `output_schema` for typed REST routes.
+4. Expose standalone behavior via a new endpoint in `api/main.py` (see `/research`) or rely on registry-driven pack routes when registered.
+5. Add tests under `tests/` (unit tests for the agent; pack contract tests if you extend `PackRegistry`).
 
 ## Reporting Issues
 
