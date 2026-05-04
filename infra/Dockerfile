@@ -81,6 +81,8 @@ COPY --from=builder /build/.venv /app/.venv
 COPY api/      ./api/
 COPY core/     ./core/
 COPY agents/   ./agents/
+COPY platform/ ./platform/
+COPY domain_packs/ ./domain_packs/
 
 # Transfer ownership of the working directory to the non-root user
 RUN chown -R appuser:appgroup /app
