@@ -6,9 +6,14 @@ Verifies:
 - Concrete packs can override schemas with typed Pydantic models.
 - Schema validation works correctly (accepts valid input, rejects invalid).
 - Helper constructors (e.g. from_analysis_report) produce well-formed outputs.
+- PackRegistry registration, retrieval, and BaseDomainPack contract (methods, attrs).
 """
 
 from __future__ import annotations
+
+import inspect
+from platform.base_pack import BaseDomainPack, _DefaultPackInput, _DefaultPackOutput
+from platform.registry import PackRegistry
 
 import pytest
 from pydantic import ValidationError
@@ -19,9 +24,6 @@ from domain_packs.research_analysis.schemas import (
     ResearchAnalysisInput,
     ResearchAnalysisOutput,
 )
-from platform.base_pack import BaseDomainPack, _DefaultPackInput, _DefaultPackOutput
-from platform.registry import PackRegistry
-
 
 # ---------------------------------------------------------------------------
 # BaseDomainPack default schema tests
@@ -192,3 +194,98 @@ def test_list_packs_with_metadata_includes_json_schema() -> None:
         assert "type" in output_js or "properties" in output_js, (
             f"output_schema for {item['pack_id']} is not a valid JSON Schema dict: {output_js}"
         )
+
+
+# ---------------------------------------------------------------------------
+# PackRegistry — registration and retrieval
+# ---------------------------------------------------------------------------
+
+
+def test_research_analysis_pack_is_registered() -> None:
+    """``research_analysis`` must appear in ``list_packs()``."""
+    assert "research_analysis" in PackRegistry.list_packs()
+
+
+def test_registry_get_returns_correct_class() -> None:
+    """``get('research_analysis')`` must return ``ResearchAnalysisPack``."""
+    resolved = PackRegistry.get("research_analysis")
+    assert resolved is ResearchAnalysisPack
+
+
+def test_registry_get_unknown_raises_key_error() -> None:
+    """Unregistered pack_id must raise KeyError."""
+    with pytest.raises(KeyError, match="not registered"):
+        PackRegistry.get("nonexistent_pack_xyz")
+
+
+def test_registry_list_packs_returns_sorted_list() -> None:
+    """Pack IDs must be returned sorted."""
+    packs = PackRegistry.list_packs()
+    assert isinstance(packs, list)
+    assert packs == sorted(packs)
+
+
+def test_registry_register_without_pack_id_raises() -> None:
+    """Registering a class without ``pack_id`` must raise ValueError."""
+    class BadPack(BaseDomainPack):
+        pass
+
+    with pytest.raises(ValueError, match="pack_id"):
+        PackRegistry.register(BadPack)
+
+
+# ---------------------------------------------------------------------------
+# BaseDomainPack — abstract contract on ResearchAnalysisPack
+# ---------------------------------------------------------------------------
+
+
+def test_research_analysis_pack_inherits_base() -> None:
+    assert issubclass(ResearchAnalysisPack, BaseDomainPack)
+
+
+def test_research_analysis_pack_has_required_class_attrs() -> None:
+    assert ResearchAnalysisPack.pack_id == "research_analysis"
+    assert isinstance(ResearchAnalysisPack.name, str) and ResearchAnalysisPack.name
+    assert (
+        isinstance(ResearchAnalysisPack.description, str)
+        and ResearchAnalysisPack.description
+    )
+
+
+def test_research_analysis_pack_implements_abstract_methods() -> None:
+    abstract_methods = {"run", "arun", "stream_events"}
+    pack_methods = set(dir(ResearchAnalysisPack))
+    missing = abstract_methods - pack_methods
+    assert not missing, f"Missing abstract method implementations: {missing}"
+
+
+def test_research_analysis_pack_run_is_not_abstract() -> None:
+    assert not getattr(ResearchAnalysisPack.run, "__isabstractmethod__", False)
+
+
+def test_research_analysis_pack_arun_is_coroutine() -> None:
+    assert inspect.iscoroutinefunction(ResearchAnalysisPack.arun)
+
+
+def test_research_analysis_pack_stream_events_is_async_gen() -> None:
+    assert inspect.isasyncgenfunction(ResearchAnalysisPack.stream_events)
+
+
+def test_research_analysis_pack_supports_context_manager() -> None:
+    assert hasattr(ResearchAnalysisPack, "__enter__")
+    assert hasattr(ResearchAnalysisPack, "__exit__")
+
+
+# ---------------------------------------------------------------------------
+# Config integration
+# ---------------------------------------------------------------------------
+
+
+def test_default_pack_id_resolves_to_registered_pack() -> None:
+    """``DEFAULT_PACK_ID`` from settings must map to a registered pack class."""
+    from core.config import get_settings
+
+    settings = get_settings()
+    pack_id = settings.default_pack_id
+    resolved = PackRegistry.get(pack_id)
+    assert issubclass(resolved, BaseDomainPack)
