@@ -19,6 +19,9 @@ Architecture notes
 * CORS origins are driven by ``settings`` — never hard-coded.
 * Secrets are loaded exclusively from the environment / ``.env`` file via the
   ``Settings`` pydantic-settings model in ``core.config``.
+* Legacy ``POST /run`` and ``POST /run/stream`` resolve the pipeline class via
+  ``_legacy_pipeline_pack_cls()`` (registry default ``_active_pack_cls`` plus
+  ``patch("api.main.MultiAgentGraph")`` support for tests).
 """
 
 from __future__ import annotations
@@ -330,6 +333,41 @@ def get_shared_checkpointer() -> Any | None:
 
 def get_shared_memory() -> Any:
     return _shared_memory
+
+
+def _legacy_pipeline_pack_cls() -> Any:
+    """Return the pack class used by legacy ``POST /run`` and ``POST /run/stream``.
+
+    **Production path.** On startup the lifespan sets ``_active_pack_cls`` to
+    ``PackRegistry.get(settings.default_pack_id)``. That is the authoritative
+    default pack for this process. The import ``MultiAgentGraph`` from
+    ``core.graph`` is an alias of ``ResearchAnalysisPack``; when
+    ``DEFAULT_PACK_ID`` is ``research_analysis`` (the usual deployment),
+    ``_active_pack_cls`` and ``MultiAgentGraph`` are the **same class object**,
+    so the branch below is irrelevant and behaviour matches the registry only.
+
+    **Test path.** Tests replace ``api.main.MultiAgentGraph`` with a mock via
+    ``patch("api.main.MultiAgentGraph", ...)``. The name bound on this module
+    then **differs** from ``_active_pack_cls`` (still the real class set at
+    lifespan). We instantiate the patched object so requests exercise mocks and
+    never call the real graph.
+
+    **Edge case.** If ``DEFAULT_PACK_ID`` ever selects a pack whose class is not
+    the same object as ``MultiAgentGraph``, the module binding and
+    ``_active_pack_cls`` differ without a mock; this helper prefers the module
+    binding when those two differ. For explicit pack selection independent of
+    ``DEFAULT_PACK_ID``, use ``POST /packs/{pack_id}/run`` instead.
+
+    Returns:
+        A type (or test double) callable as ``cls(run_id=..., llm=..., checkpointer=...)``.
+    """
+    import sys as _sys
+
+    _mod = _sys.modules.get(__name__)
+    _bound_on_module = getattr(_mod, "MultiAgentGraph", None) if _mod is not None else None
+    if _bound_on_module is not None and _bound_on_module is not _active_pack_cls:
+        return _bound_on_module
+    return _active_pack_cls or MultiAgentGraph
 
 
 # ---------------------------------------------------------------------------
@@ -1038,6 +1076,11 @@ async def run_pipeline(
         500 Internal Server Error: When the agent pipeline encounters an
             unrecoverable error.
         504 Gateway Timeout: When the agent exceeds its configured step budget.
+
+    Note:
+        The pipeline class is resolved by :func:`_legacy_pipeline_pack_cls`
+        (registry default ``_active_pack_cls`` vs patched ``MultiAgentGraph`` on
+        this module — see that helper).
     """
     if _shutting_down.is_set():
         raise HTTPException(
@@ -1077,20 +1120,7 @@ async def run_pipeline(
     )
 
     def _execute() -> RunResponse:
-        # Prefer the current module-level MultiAgentGraph so that
-        # unittest.mock.patch("api.main.MultiAgentGraph", …) is honoured in
-        # tests.  Fall back to the registry-resolved _active_pack_cls when the
-        # module attribute has not been replaced (i.e. the two are the same
-        # class object, as in production).
-        import sys as _sys
-
-        _mod = _sys.modules.get(__name__)
-        _mag = getattr(_mod, "MultiAgentGraph", None) if _mod is not None else None
-        pack_cls = (
-            _mag
-            if (_mag is not None and _mag is not _active_pack_cls)
-            else (_active_pack_cls or MultiAgentGraph)
-        )
+        pack_cls = _legacy_pipeline_pack_cls()
         with pack_cls(
             run_id=run_id,
             llm=_shared_llm,
@@ -1184,8 +1214,9 @@ async def _stream_pipeline(
 ) -> AsyncGenerator[str, None]:
     """Async generator that streams the pipeline execution as SSE events.
 
-    Uses ``MultiAgentGraph.stream_events()`` for real-time node
-    transitions and token streaming (when the LLM supports it).
+    The pack class is the same as for ``POST /run`` — see
+    :func:`_legacy_pipeline_pack_cls`.  Streams via the resolved class's
+    ``stream_events()`` (typically ``ResearchAnalysisPack`` / ``MultiAgentGraph`` alias).
 
     Event types emitted:
 
@@ -1212,15 +1243,7 @@ async def _stream_pipeline(
         llm = get_shared_llm()
         checkpointer = get_shared_checkpointer()
 
-        import sys as _sys
-
-        _mod = _sys.modules.get(__name__)
-        _mag = getattr(_mod, "MultiAgentGraph", None) if _mod is not None else None
-        pack_cls = (
-            _mag
-            if (_mag is not None and _mag is not _active_pack_cls)
-            else (_active_pack_cls or MultiAgentGraph)
-        )
+        pack_cls = _legacy_pipeline_pack_cls()
         pipeline = pack_cls(run_id=run_id, llm=llm, checkpointer=checkpointer)
         report = None
 
@@ -1328,8 +1351,9 @@ async def run_stream(
     1. ``ResearchAgent``  — expands the query and produces a ``ResearchResult``.
     2. ``AnalystAgent``   — consumes the research and produces an ``AnalysisReport``.
 
-    Events are streamed in real time via ``MultiAgentGraph.stream_events()``
-    which leverages LangGraph's ``astream_events`` API.
+    Events are streamed from the pack class returned by
+    :func:`_legacy_pipeline_pack_cls` (same rules as ``POST /run``), using that
+    class's ``stream_events()`` and LangGraph's ``astream_events`` API under the hood.
 
     SSE event types
     ---------------
