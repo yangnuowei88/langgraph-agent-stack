@@ -29,12 +29,14 @@ import functools
 import hmac
 import json
 import logging
+import platform as _platform_pkg  # noqa: F401,E402 — triggers PackRegistry registration; must follow core.graph import
 import threading
 import time
 import uuid
 from collections.abc import AsyncGenerator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from platform.registry import PackRegistry
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
@@ -100,6 +102,7 @@ _shared_memory: Any = None
 _rate_limiter: Any = None
 _input_validator = InputValidator(max_length=2000)
 _shutting_down = threading.Event()
+_active_pack_cls: Any = None  # resolved from PackRegistry at startup
 
 
 # ---------------------------------------------------------------------------
@@ -186,7 +189,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         * Gracefully shuts down the thread pool, waiting for in-flight tasks.
     """
     global _start_time, _executor, _shared_llm, _shared_checkpointer, _shared_memory
-    global _rate_limiter
+    global _rate_limiter, _active_pack_cls
 
     _start_time = time.monotonic()
 
@@ -216,6 +219,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     init_tracing()
     _init_llm_and_checkpointer(_settings)
+
+    try:
+        _active_pack_cls = PackRegistry.get(_settings.default_pack_id)
+        logger.info(
+            "Active domain pack resolved",
+            extra={"pack_id": _settings.default_pack_id},
+        )
+    except KeyError as exc:
+        raise RuntimeError(
+            f"DEFAULT_PACK_ID '{_settings.default_pack_id}' is not registered. "
+            "Check platform/__init__.py."
+        ) from exc
 
     _shared_memory = create_run_history(_settings)
 
@@ -763,7 +778,15 @@ async def run_pipeline(
     )
 
     def _execute() -> RunResponse:
-        with MultiAgentGraph(
+        # Prefer the current module-level MultiAgentGraph so that
+        # unittest.mock.patch("api.main.MultiAgentGraph", …) is honoured in
+        # tests.  Fall back to the registry-resolved _active_pack_cls when the
+        # module attribute has not been replaced (same class object as in production).
+        import sys as _sys
+        _mod = _sys.modules.get(__name__)
+        _mag = getattr(_mod, "MultiAgentGraph", None) if _mod is not None else None
+        pack_cls = _mag if (_mag is not None and _mag is not _active_pack_cls) else (_active_pack_cls or MultiAgentGraph)
+        with pack_cls(
             run_id=run_id,
             llm=_shared_llm,
             checkpointer=_shared_checkpointer,
@@ -871,7 +894,11 @@ async def _stream_pipeline(
         llm = get_shared_llm()
         checkpointer = get_shared_checkpointer()
 
-        pipeline = MultiAgentGraph(run_id=run_id, llm=llm, checkpointer=checkpointer)
+        import sys as _sys
+        _mod = _sys.modules.get(__name__)
+        _mag = getattr(_mod, "MultiAgentGraph", None) if _mod is not None else None
+        pack_cls = _mag if (_mag is not None and _mag is not _active_pack_cls) else (_active_pack_cls or MultiAgentGraph)
+        pipeline = pack_cls(run_id=run_id, llm=llm, checkpointer=checkpointer)
         report = None
 
         try:
