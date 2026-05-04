@@ -1,0 +1,194 @@
+"""
+tests/test_pack_contracts.py — Contract tests for BaseDomainPack and domain packs.
+
+Verifies:
+- BaseDomainPack exposes default input/output schemas as ClassVars.
+- Concrete packs can override schemas with typed Pydantic models.
+- Schema validation works correctly (accepts valid input, rejects invalid).
+- Helper constructors (e.g. from_analysis_report) produce well-formed outputs.
+"""
+
+from __future__ import annotations
+
+import pytest
+from pydantic import ValidationError
+
+from agents.models import AnalysisReport
+from domain_packs.research_analysis.pack import ResearchAnalysisPack
+from domain_packs.research_analysis.schemas import (
+    ResearchAnalysisInput,
+    ResearchAnalysisOutput,
+)
+from platform.base_pack import BaseDomainPack, _DefaultPackInput, _DefaultPackOutput
+from platform.registry import PackRegistry
+
+
+# ---------------------------------------------------------------------------
+# BaseDomainPack default schema tests
+# ---------------------------------------------------------------------------
+
+
+def test_base_pack_has_default_input_schema() -> None:
+    """BaseDomainPack.input_schema must equal _DefaultPackInput."""
+    assert BaseDomainPack.input_schema is _DefaultPackInput
+
+
+def test_base_pack_has_default_output_schema() -> None:
+    """BaseDomainPack.output_schema must equal _DefaultPackOutput."""
+    assert BaseDomainPack.output_schema is _DefaultPackOutput
+
+
+# ---------------------------------------------------------------------------
+# ResearchAnalysisPack custom schema declarations
+# ---------------------------------------------------------------------------
+
+
+def test_research_pack_has_custom_input_schema() -> None:
+    """ResearchAnalysisPack.input_schema must be ResearchAnalysisInput (not the default)."""
+    assert ResearchAnalysisPack.input_schema is ResearchAnalysisInput
+
+
+def test_research_pack_has_custom_output_schema() -> None:
+    """ResearchAnalysisPack.output_schema must be ResearchAnalysisOutput (not the default)."""
+    assert ResearchAnalysisPack.output_schema is ResearchAnalysisOutput
+
+
+# ---------------------------------------------------------------------------
+# ResearchAnalysisInput validation
+# ---------------------------------------------------------------------------
+
+
+def test_research_pack_input_schema_validates_query() -> None:
+    """ResearchAnalysisInput accepts a non-empty query with default max_sources."""
+    inp = ResearchAnalysisInput(query="test")
+    assert inp.query == "test"
+    assert inp.max_sources == 5
+
+
+def test_research_pack_input_schema_rejects_empty_query() -> None:
+    """ResearchAnalysisInput must reject an empty query string."""
+    with pytest.raises(ValidationError):
+        ResearchAnalysisInput(query="")
+
+
+def test_research_pack_input_schema_accepts_custom_max_sources() -> None:
+    """ResearchAnalysisInput accepts a valid max_sources within bounds."""
+    inp = ResearchAnalysisInput(query="hello", max_sources=20)
+    assert inp.max_sources == 20
+
+
+def test_research_pack_input_schema_rejects_max_sources_zero() -> None:
+    """ResearchAnalysisInput must reject max_sources=0 (ge=1 constraint)."""
+    with pytest.raises(ValidationError):
+        ResearchAnalysisInput(query="hello", max_sources=0)
+
+
+def test_research_pack_input_schema_rejects_max_sources_over_limit() -> None:
+    """ResearchAnalysisInput must reject max_sources > 50 (le=50 constraint)."""
+    with pytest.raises(ValidationError):
+        ResearchAnalysisInput(query="hello", max_sources=51)
+
+
+# ---------------------------------------------------------------------------
+# ResearchAnalysisOutput.from_analysis_report
+# ---------------------------------------------------------------------------
+
+
+def test_research_pack_output_schema_from_analysis_report() -> None:
+    """from_analysis_report must map all AnalysisReport fields onto the output schema."""
+    report = AnalysisReport(
+        query="What is quantum computing?",
+        executive_summary="A paradigm shift in computational power.",
+        key_insights=["Qubits enable superposition."],
+        patterns=["Rapid hardware iteration."],
+        implications=["Cryptographic systems need replacement."],
+        confidence=0.82,
+        research_summary="Quantum computing uses qubits.",
+        metadata={"run_id": "test-run-001"},
+    )
+
+    output = ResearchAnalysisOutput.from_analysis_report(report, cost_usd=0.05)
+
+    assert output.query == report.query
+    assert output.executive_summary == report.executive_summary
+    assert output.key_insights == report.key_insights
+    assert output.patterns == report.patterns
+    assert output.implications == report.implications
+    assert output.confidence == report.confidence
+    assert output.research_summary == report.research_summary
+    assert output.cost_usd == pytest.approx(0.05)
+
+
+def test_research_pack_output_schema_from_analysis_report_no_cost() -> None:
+    """from_analysis_report with no cost_usd must default to None."""
+    report = AnalysisReport(
+        query="test",
+        executive_summary="summary",
+        key_insights=[],
+        patterns=[],
+        implications=[],
+        confidence=0.5,
+        research_summary="research",
+    )
+
+    output = ResearchAnalysisOutput.from_analysis_report(report)
+    assert output.cost_usd is None
+
+
+def test_research_pack_output_schema_from_analysis_report_rejects_wrong_type() -> None:
+    """from_analysis_report must raise TypeError when passed a non-AnalysisReport."""
+    with pytest.raises(TypeError):
+        ResearchAnalysisOutput.from_analysis_report({"query": "bad"})
+
+
+# ---------------------------------------------------------------------------
+# PackRegistry.get_schemas
+# ---------------------------------------------------------------------------
+
+
+def test_get_schemas_returns_correct_tuple() -> None:
+    """get_schemas('research_analysis') must return (ResearchAnalysisInput, ResearchAnalysisOutput)."""
+    input_schema, output_schema = PackRegistry.get_schemas("research_analysis")
+    assert input_schema is ResearchAnalysisInput
+    assert output_schema is ResearchAnalysisOutput
+
+
+def test_get_schemas_raises_for_unknown_pack() -> None:
+    """get_schemas must raise KeyError for an unregistered pack_id."""
+    with pytest.raises(KeyError):
+        PackRegistry.get_schemas("nonexistent")
+
+
+# ---------------------------------------------------------------------------
+# PackRegistry.list_packs_with_metadata
+# ---------------------------------------------------------------------------
+
+
+def test_list_packs_with_metadata_structure() -> None:
+    """Every item returned by list_packs_with_metadata must have the five required keys."""
+    metadata = PackRegistry.list_packs_with_metadata()
+    assert len(metadata) >= 1, "At least one pack must be registered"
+    for item in metadata:
+        assert "pack_id" in item
+        assert "name" in item
+        assert "description" in item
+        assert "input_schema" in item
+        assert "output_schema" in item
+
+
+def test_list_packs_with_metadata_includes_json_schema() -> None:
+    """input_schema and output_schema in metadata must be valid JSON Schema dicts."""
+    metadata = PackRegistry.list_packs_with_metadata()
+    assert len(metadata) >= 1, "At least one pack must be registered"
+    for item in metadata:
+        input_js = item["input_schema"]
+        output_js = item["output_schema"]
+        assert isinstance(input_js, dict)
+        assert isinstance(output_js, dict)
+        # JSON Schema standard: top-level dict must contain 'type' or 'properties'
+        assert "type" in input_js or "properties" in input_js, (
+            f"input_schema for {item['pack_id']} is not a valid JSON Schema dict: {input_js}"
+        )
+        assert "type" in output_js or "properties" in output_js, (
+            f"output_schema for {item['pack_id']} is not a valid JSON Schema dict: {output_js}"
+        )

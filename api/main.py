@@ -37,13 +37,22 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    FastAPI,
+    HTTPException,
+    Request,
+    Response,
+    status,
+)
 from fastapi import Path as FastAPIPath
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from langchain_core.language_models import BaseChatModel
 
 from agents.base_agent import (
+    AgentBudgetExceededError,
     AgentExecutionError,
     AgentTimeoutError,
     AgentValidationError,
@@ -82,16 +91,24 @@ from core.security import InputValidator, create_rate_limiter
 configure_logging(level=get_settings().log_level.value)
 logger = logging.getLogger(__name__)
 
+# NOTE: load-order sensitive — import local 'platform' package AFTER all other
+# imports so the stdlib-shadowing bootstrap in platform/__init__.py runs safely.
+# The 'import platform as _platform_pkg' side-effect registers built-in packs
+# via PackRegistry.register() inside platform/__init__.py.
+import platform as _platform_pkg  # noqa: E402,F401 — side-effect import (triggers PackRegistry)
+from platform.registry import PackRegistry  # noqa: E402
+
 # ---------------------------------------------------------------------------
 # Module-level state (populated during lifespan startup)
 # ---------------------------------------------------------------------------
 
-_APP_VERSION = "0.4.0"
+_APP_VERSION = "0.5.0"
 _start_time: float = 0.0
 _executor: ThreadPoolExecutor | None = None
 _shared_llm: BaseChatModel | None = None
 _shared_checkpointer: Any | None = None
 _shared_memory: Any = None
+_active_pack_cls: Any = None  # resolved from PackRegistry at startup
 
 # Security primitives — 60 requests per minute per IP is a conservative
 # default suited for an LLM pipeline where each request may take several
@@ -186,7 +203,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         * Gracefully shuts down the thread pool, waiting for in-flight tasks.
     """
     global _start_time, _executor, _shared_llm, _shared_checkpointer, _shared_memory
-    global _rate_limiter
+    global _rate_limiter, _active_pack_cls
 
     _start_time = time.monotonic()
 
@@ -216,6 +233,40 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     init_tracing()
     _init_llm_and_checkpointer(_settings)
+
+    try:
+        _active_pack_cls = PackRegistry.get(_settings.default_pack_id)
+        logger.info(
+            "Active domain pack resolved",
+            extra={"pack_id": _settings.default_pack_id},
+        )
+    except KeyError as exc:
+        raise RuntimeError(
+            f"DEFAULT_PACK_ID '{_settings.default_pack_id}' is not registered. "
+            "Check platform/__init__.py."
+        ) from exc
+
+    # Wire per-pack routers from registry — guard against duplicate registration
+    # which can occur in tests where the same module-level ``app`` object is
+    # reused across multiple TestClient context managers (each one triggers this
+    # lifespan afresh).
+    _existing_prefixes = {
+        getattr(r, "path", "").split("/{")[0] for r in app.routes if hasattr(r, "path")
+    }
+    for _pack_id in PackRegistry.list_packs():
+        _expected_prefix = f"/packs/{_pack_id}/run"
+        if _expected_prefix in _existing_prefixes:
+            logger.debug(
+                "Pack router already registered — skipping",
+                extra={"pack_id": _pack_id},
+            )
+            continue
+        _pack_cls = PackRegistry.get(_pack_id)
+        _in_schema, _out_schema = PackRegistry.get_schemas(_pack_id)
+        app.include_router(
+            _build_pack_router(_pack_id, _pack_cls, _in_schema, _out_schema)
+        )
+        logger.info("Pack router registered", extra={"pack_id": _pack_id})
 
     _shared_memory = create_run_history(_settings)
 
@@ -279,6 +330,251 @@ def get_shared_checkpointer() -> Any | None:
 
 def get_shared_memory() -> Any:
     return _shared_memory
+
+
+# ---------------------------------------------------------------------------
+# Shutdown guard helper (used by per-pack router endpoints)
+# ---------------------------------------------------------------------------
+
+
+def _guard_not_shutting_down() -> None:
+    """Raise 503 if the server is in the process of shutting down."""
+    if _shutting_down.is_set():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Server is shutting down.",
+        )
+
+
+# ---------------------------------------------------------------------------
+# API-key Depends helper (used by per-pack router endpoints)
+# ---------------------------------------------------------------------------
+
+
+def verify_api_key(request: Request) -> None:
+    """FastAPI dependency that validates the Bearer token when API_KEY is set.
+
+    Returns None (not the token) so the caller only needs ``Depends(verify_api_key)``
+    without caring about the return value.  Auth is also enforced globally via the
+    ``auth_middleware``; this dependency makes the contract explicit in the OpenAPI
+    schema for pack routes.
+    """
+    _api_key = get_settings().api_key
+    if _api_key is None:
+        return  # Auth disabled globally
+    auth_header = request.headers.get("Authorization", "")
+    token = (
+        auth_header.removeprefix("Bearer ").strip()
+        if auth_header.startswith("Bearer ")
+        else ""
+    )
+    if not token or not hmac.compare_digest(token, _api_key):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing Bearer token.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+# ---------------------------------------------------------------------------
+# Per-pack router factory
+# ---------------------------------------------------------------------------
+
+
+def _build_pack_router(
+    pack_id: str,
+    pack_cls: type,  # type: ignore[type-arg]  — dynamic, mypy can't narrow here
+    input_model: type,  # type: ignore[type-arg]
+    output_model: type,  # type: ignore[type-arg]
+) -> APIRouter:
+    """Build a per-pack APIRouter with typed /run and /run/stream endpoints.
+
+    Called during lifespan startup for each registered pack.
+    The generated routes use pack-specific Pydantic models for request/response
+    validation — inputs are rejected before any LLM call when invalid.
+
+    Note: type annotations use bare ``type`` because the specific Pydantic
+    subclass is only known at runtime (dynamic dispatch from PackRegistry).
+    The ``# type: ignore`` comments on the function signature are intentional.
+
+    Closure safety: ``pack_cls``, ``input_model``, and ``output_model`` are
+    captured from the function parameters, not from a loop variable, so there
+    is no late-binding hazard.  Each call to ``_build_pack_router`` creates a
+    fresh scope with its own binding of these names.
+    """
+    router = APIRouter(prefix=f"/packs/{pack_id}", tags=[pack_id])
+
+    # Define endpoint functions without decorator first so we can patch
+    # __annotations__ with the real runtime types.  ``from __future__ import
+    # annotations`` (active at module level) turns all annotations into strings —
+    # ``body: input_model`` becomes the string ``"input_model"`` which FastAPI
+    # cannot resolve.  Overriding __annotations__ with the actual classes before
+    # router.add_api_route() is called ensures Pydantic receives the real model.
+
+    async def run_pack(  # type: ignore[misc]
+        body: input_model,  # type: ignore[valid-type]
+        request: Request,
+        response: Response,
+        _auth: Annotated[None, Depends(verify_api_key)],
+    ) -> Any:
+        """Execute the pack pipeline synchronously."""
+        _guard_not_shutting_down()
+        run_id = str(uuid.uuid4())
+
+        # Version pinning via request header
+        requested_version = request.headers.get("X-Pack-Version") or None
+
+        # Sticky session: if no explicit version pin, check session history
+        if requested_version is None and _shared_memory is not None:
+            session_id_for_sticky = getattr(body, "session_id", None) or None
+            if session_id_for_sticky and hasattr(_shared_memory, "get_pack_version_for_session"):
+                requested_version = _shared_memory.get_pack_version_for_session(
+                    session_id_for_sticky, pack_id
+                )
+
+        try:
+            pack_cls_to_use = PackRegistry.get(pack_id, version=requested_version)
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+        # Determine the version string actually used (for the response header)
+        used_version = next(
+            (pv.version for pv in PackRegistry._get_versions(pack_id) if pv.pack_cls is pack_cls_to_use),
+            "unknown",
+        )
+        response.headers["X-Pack-Version-Used"] = used_version
+
+        raw_query = body.query if hasattr(body, "query") else str(body)
+        try:
+            query = _input_validator.validate(raw_query)
+        except AgentValidationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
+
+        def _execute() -> Any:
+            with pack_cls_to_use(
+                run_id=run_id,
+                llm=get_shared_llm(),
+                checkpointer=get_shared_checkpointer(),
+            ) as pipeline:
+                result = pipeline.run(query)
+                cost_usd = getattr(pipeline, "cost_usd", None)
+
+                # Record run in history with pack_version metadata
+                if _shared_memory is not None:
+                    _shared_memory.save_run(
+                        run_id=run_id,
+                        query=query,
+                        result={} if not hasattr(result, "to_dict") else result.to_dict(),
+                        metadata={
+                            "pack_id": pack_id,
+                            "pack_version": used_version,
+                        },
+                    )
+
+                if hasattr(output_model, "from_analysis_report"):
+                    return output_model.from_analysis_report(result, cost_usd=cost_usd)
+                return result
+
+        try:
+            return await _run_in_executor(_execute)
+        except AgentBudgetExceededError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=str(exc)
+            ) from exc
+        except AgentTimeoutError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=str(exc)
+            ) from exc
+        except (AgentExecutionError, AgentValidationError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)
+            ) from exc
+
+    # Patch __annotations__ so FastAPI / Pydantic see the real model classes,
+    # not the deferred-evaluation string "input_model" produced by PEP 563.
+    run_pack.__annotations__["body"] = input_model
+
+    router.add_api_route(
+        "/run",
+        run_pack,
+        methods=["POST"],
+        summary=f"Run {pack_id} pipeline",
+        response_model=output_model,
+    )
+
+    async def stream_pack(  # type: ignore[misc]
+        body: input_model,  # type: ignore[valid-type]
+        request: Request,
+        _auth: Annotated[None, Depends(verify_api_key)],
+    ) -> StreamingResponse:
+        """Stream pack pipeline events as Server-Sent Events."""
+        _guard_not_shutting_down()
+        run_id = str(uuid.uuid4())
+
+        requested_version = request.headers.get("X-Pack-Version") or None
+        try:
+            pack_cls_to_use = PackRegistry.get(pack_id, version=requested_version)
+        except KeyError as exc:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+        used_version = next(
+            (pv.version for pv in PackRegistry._get_versions(pack_id) if pv.pack_cls is pack_cls_to_use),
+            "unknown",
+        )
+
+        raw_query = body.query if hasattr(body, "query") else str(body)
+        try:
+            query = _input_validator.validate(raw_query)
+        except AgentValidationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=str(exc),
+            ) from exc
+
+        async def _event_generator() -> AsyncGenerator[str, None]:
+            pack = pack_cls_to_use(
+                run_id=run_id,
+                llm=get_shared_llm(),
+                checkpointer=get_shared_checkpointer(),
+            )
+            try:
+                async for event in pack.stream_events(query):
+                    yield f"data: {json.dumps(event, default=str)}\n\n"
+            finally:
+                pack.close()
+
+        async def _timed_event_generator() -> AsyncGenerator[str, None]:
+            try:
+                async with asyncio.timeout(get_settings().stream_timeout_seconds):
+                    async for chunk in _event_generator():
+                        yield chunk
+            except TimeoutError:
+                yield f"data: {json.dumps({'type': 'error', 'message': f'Stream timed out after {get_settings().stream_timeout_seconds}s'})}\n\n"
+
+        return StreamingResponse(
+            _timed_event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "X-Pack-Version-Used": used_version,
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    # Same annotation fix for the stream endpoint.
+    stream_pack.__annotations__["body"] = input_model
+
+    router.add_api_route(
+        "/run/stream",
+        stream_pack,
+        methods=["POST"],
+        summary=f"Stream {pack_id} pipeline",
+    )
+
+    return router
 
 
 # ---------------------------------------------------------------------------
@@ -721,6 +1017,7 @@ async def run_pipeline(
     Raises:
         422 Unprocessable Entity: When the request body fails validation.
         400 Bad Request: When the query is empty after stripping whitespace.
+        402 Payment Required: When the run exceeds its configured USD cost budget.
         500 Internal Server Error: When the agent pipeline encounters an
             unrecoverable error.
         504 Gateway Timeout: When the agent exceeds its configured step budget.
@@ -763,12 +1060,28 @@ async def run_pipeline(
     )
 
     def _execute() -> RunResponse:
-        with MultiAgentGraph(
+        # Prefer the current module-level MultiAgentGraph so that
+        # unittest.mock.patch("api.main.MultiAgentGraph", …) is honoured in
+        # tests.  Fall back to the registry-resolved _active_pack_cls when the
+        # module attribute has not been replaced (i.e. the two are the same
+        # class object, as in production).
+        import sys as _sys
+
+        _mod = _sys.modules.get(__name__)
+        _mag = getattr(_mod, "MultiAgentGraph", None) if _mod is not None else None
+        pack_cls = (
+            _mag
+            if (_mag is not None and _mag is not _active_pack_cls)
+            else (_active_pack_cls or MultiAgentGraph)
+        )
+        with pack_cls(
             run_id=run_id,
             llm=_shared_llm,
             checkpointer=_shared_checkpointer,
         ) as pipeline:
             report = pipeline.run(query)
+
+            cost_usd = getattr(pipeline, "cost_usd", None)
 
             if _shared_memory is not None:
                 _shared_memory.save_run(
@@ -778,7 +1091,9 @@ async def run_pipeline(
                     metadata={"session_id": session_id, "agent": "MultiAgentGraph"},
                 )
 
-            return RunResponse.from_analysis_report(report, session_id=session_id)
+            return RunResponse.from_analysis_report(
+                report, session_id=session_id, cost_usd=cost_usd
+            )
 
     try:
         response = await _run_in_executor(_execute)
@@ -799,6 +1114,15 @@ async def run_pipeline(
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail="The agent pipeline exceeded its step budget. Try a simpler query.",
+        ) from exc
+    except AgentBudgetExceededError as exc:
+        logger.warning(
+            "POST /run — budget exceeded",
+            extra={"run_id": run_id, "error": str(exc)},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="Run cost budget exceeded. Increase PACK_DEFAULT_BUDGET_USD or pass a higher budget.",
         ) from exc
     except AgentExecutionError as exc:
         logger.error(
@@ -871,7 +1195,16 @@ async def _stream_pipeline(
         llm = get_shared_llm()
         checkpointer = get_shared_checkpointer()
 
-        pipeline = MultiAgentGraph(run_id=run_id, llm=llm, checkpointer=checkpointer)
+        import sys as _sys
+
+        _mod = _sys.modules.get(__name__)
+        _mag = getattr(_mod, "MultiAgentGraph", None) if _mod is not None else None
+        pack_cls = (
+            _mag
+            if (_mag is not None and _mag is not _active_pack_cls)
+            else (_active_pack_cls or MultiAgentGraph)
+        )
+        pipeline = pack_cls(run_id=run_id, llm=llm, checkpointer=checkpointer)
         report = None
 
         try:
@@ -1092,6 +1425,7 @@ async def run_research(
     Raises:
         422 Unprocessable Entity: When the request body fails validation.
         400 Bad Request: When the query is empty after stripping whitespace.
+        402 Payment Required: When the run exceeds its configured USD cost budget.
         500 Internal Server Error: When the research agent fails.
         504 Gateway Timeout: When the agent exceeds its configured step budget.
     """
@@ -1139,6 +1473,8 @@ async def run_research(
             checkpointer=_shared_checkpointer,
         )
         result = agent.run_structured(query)
+        cost_usd = getattr(agent, "cost_usd", None)
+        # cost_usd captured here while agent is still in scope; do not move
 
         if _shared_memory is not None:
             _shared_memory.save_run(
@@ -1148,7 +1484,9 @@ async def run_research(
                 metadata={"session_id": session_id, "agent": "ResearchAgent"},
             )
 
-        return ResearchResponse.from_research_result(result, session_id=session_id)
+        return ResearchResponse.from_research_result(
+            result, session_id=session_id, cost_usd=cost_usd
+        )
 
     try:
         response = await _run_in_executor(_execute)
@@ -1169,6 +1507,15 @@ async def run_research(
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail="The research agent exceeded its step budget. Try a simpler query.",
+        ) from exc
+    except AgentBudgetExceededError as exc:
+        logger.warning(
+            "POST /research — budget exceeded",
+            extra={"run_id": run_id, "error": str(exc)},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_402_PAYMENT_REQUIRED,
+            detail="Run cost budget exceeded. Increase PACK_DEFAULT_BUDGET_USD or pass a higher budget.",
         ) from exc
     except AgentExecutionError as exc:
         logger.error(
@@ -1252,3 +1599,57 @@ async def get_session_history(
         len(entries),
     )
     return HistoryResponse(session_id=session_id, entries=entries, total=len(entries))
+
+
+@app.get(
+    "/packs",
+    summary="List registered domain packs",
+    response_model=list[dict],  # type: ignore[type-arg]
+    tags=["packs"],
+)
+async def list_packs() -> list[dict[str, Any]]:
+    """Return all registered domain packs with their input/output JSON schemas.
+
+    Useful for service discovery and generating client SDKs.
+    """
+    return PackRegistry.list_packs_with_metadata()
+
+
+@app.get(
+    "/packs/{pack_id}/versions",
+    summary="List versions of a registered pack",
+    tags=["packs"],
+)
+async def list_pack_versions(pack_id: str) -> list[dict[str, Any]]:
+    """Return all registered versions for a pack with their current weights."""
+    try:
+        versions = PackRegistry._get_versions(pack_id)
+    except KeyError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Pack '{pack_id}' not found.")
+    return [{"version": pv.version, "weight": pv.weight} for pv in versions]
+
+
+@app.patch(
+    "/packs/{pack_id}/versions/{version}/weight",
+    summary="Update traffic-split weight for a pack version",
+    tags=["packs"],
+)
+async def update_pack_version_weight(
+    pack_id: str,
+    version: str,
+    body: dict[str, Any],
+) -> dict[str, Any]:
+    """Set the traffic-split weight for a specific registered pack version."""
+    weight = body.get("weight")
+    if weight is None or not isinstance(weight, (int, float)):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="'weight' field (number) is required.",
+        )
+    try:
+        PackRegistry.set_weights(pack_id, {version: float(weight)})
+    except KeyError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    return {"pack_id": pack_id, "version": version, "weight": float(weight)}

@@ -153,10 +153,14 @@ class RunResponse(BaseModel):
     session_id: str = Field(
         description="Session ID used for this run (echoed from the request or auto-generated).",
     )
+    cost_usd: float | None = Field(
+        default=None,
+        description="Estimated USD cost of LLM calls for this run. None if cost tracking is disabled.",
+    )
 
     @classmethod
     def from_analysis_report(
-        cls, report: AnalysisReport, session_id: str = ""
+        cls, report: AnalysisReport, session_id: str = "", cost_usd: float | None = None
     ) -> RunResponse:
         """
         Build a ``RunResponse`` from an ``AnalysisReport`` dataclass instance.
@@ -164,6 +168,7 @@ class RunResponse(BaseModel):
         Args:
             report: An ``agents.analyst.AnalysisReport`` instance.
             session_id: The session ID associated with this run.
+            cost_usd: Optional estimated USD cost of LLM calls for this run.
 
         Returns:
             A populated ``RunResponse`` ready for serialisation.
@@ -178,6 +183,7 @@ class RunResponse(BaseModel):
             research_summary=report.research_summary,
             metadata=report.metadata,
             session_id=session_id,
+            cost_usd=cost_usd,
         )
 
 
@@ -230,10 +236,14 @@ class ResearchResponse(BaseModel):
     session_id: str = Field(
         description="Session ID used for this run (echoed from the request or auto-generated).",
     )
+    cost_usd: float | None = Field(
+        default=None,
+        description="Estimated USD cost of LLM calls for this run. None if cost tracking is disabled.",
+    )
 
     @classmethod
     def from_research_result(
-        cls, result: ResearchResult, session_id: str = ""
+        cls, result: ResearchResult, session_id: str = "", cost_usd: float | None = None
     ) -> ResearchResponse:
         """
         Build a ``ResearchResponse`` from a ``ResearchResult`` dataclass instance.
@@ -241,6 +251,7 @@ class ResearchResponse(BaseModel):
         Args:
             result: An ``agents.researcher.ResearchResult`` instance.
             session_id: The session ID associated with this run.
+            cost_usd: Optional estimated USD cost of LLM calls for this run.
 
         Returns:
             A populated ``ResearchResponse`` ready for serialisation.
@@ -253,4 +264,5 @@ class ResearchResponse(BaseModel):
             confidence=result.confidence,
             metadata=result.metadata,
             session_id=session_id,
+            cost_usd=cost_usd,
         )

@@ -16,6 +16,7 @@ from agents.analyst import AnalysisReport
 from agents.base_agent import AgentExecutionError, AgentValidationError
 from agents.researcher import ResearchResult
 from core.graph import MultiAgentGraph
+from domain_packs.research_analysis.pack import ResearchAnalysisPack
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -406,3 +407,48 @@ class TestMultiAgentGraphStreamEvents:
         with pytest.raises(AgentExecutionError, match="without an AnalysisReport"):
             async for _ in graph.stream_events("test query"):
                 pass
+
+
+# ---------------------------------------------------------------------------
+# ResearchAnalysisPack — budget propagation
+# ---------------------------------------------------------------------------
+
+
+class TestResearchAnalysisPackBudget:
+    def test_pack_propagates_budget_to_agents(self) -> None:
+        """budget_usd passed to ResearchAnalysisPack must be stored on the instance."""
+        pack = ResearchAnalysisPack(budget_usd=1.0)
+        assert pack._budget_usd == 1.0
+        pack.close()
+
+    def test_pack_no_budget_by_default(self) -> None:
+        """When budget_usd is omitted the pack must store None."""
+        pack = ResearchAnalysisPack()
+        assert pack._budget_usd is None
+        pack.close()
+
+    def test_pack_cost_usd_property_sums_agents(self) -> None:
+        """cost_usd must return the sum of both agents' cost_usd values."""
+        pack = ResearchAnalysisPack(budget_usd=5.0)
+
+        mock_research = MagicMock()
+        mock_research.cost_usd = 0.30
+        mock_analyst = MagicMock()
+        mock_analyst.cost_usd = 0.15
+
+        pack._research_agent = mock_research
+        pack._analyst_agent = mock_analyst
+
+        assert pack.cost_usd == pytest.approx(0.45)
+        pack.close()
+
+    def test_pack_cost_usd_zero_when_no_agents_run(self) -> None:
+        """cost_usd must be 0.0 before any agents are instantiated."""
+        pack = ResearchAnalysisPack()
+        assert pack.cost_usd == 0.0
+        pack.close()
+
+    def test_negative_budget_raises(self) -> None:
+        """A negative budget_usd must raise ValueError at construction time."""
+        with pytest.raises(ValueError, match="non-negative"):
+            ResearchAnalysisPack(budget_usd=-1.0)

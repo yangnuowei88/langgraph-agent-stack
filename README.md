@@ -63,6 +63,14 @@ User Query
 | `core/security.py` | `core/security.py` | Input validation, per-IP rate limiting, log sanitization |
 | `api/main.py` | `api/main.py` | FastAPI application with lifespan management and thread pool offloading |
 
+## What's New in v0.5.0
+
+- **Per-run cost tracking** — `CostTracker` callback accumulates token costs against a per-model pricing table; agents and packs expose a `cost_usd` property; the API returns cost in every response and enforces an optional `budget_usd` cap (HTTP 402 when exceeded).
+- **Typed pack schemas** — `BaseDomainPack` now declares `input_schema` and `output_schema` ClassVars (Pydantic models); `PackRegistry.get_schemas()` and `list_packs_with_metadata()` expose them. `_build_pack_router()` auto-wires typed `/run` and `/run/stream` endpoints for every registered pack at startup.
+- **Pack versioning + traffic split** — multiple versions of a pack can be registered simultaneously via the `PackVersion` dataclass. `set_weights()` controls the traffic split. `X-Pack-Version` request header pins a call to a specific version; `X-Pack-Version-Used` response header confirms which version ran.
+- **Sticky sessions** — on the SQLite backend, the router remembers which pack version was used for a given session and reuses it automatically (override with `X-Pack-Version` header).
+- **New REST endpoints** — `GET /packs`, `GET /packs/{pack_id}/versions`, `PATCH /packs/{pack_id}/versions/{version}/weight`.
+
 ## Quick Start
 
 **Prerequisites**

@@ -27,6 +27,7 @@ from langchain_core.tools import BaseTool
 from typing_extensions import TypedDict
 
 from core.config import get_settings
+from core.cost import BudgetExceededError, CostTracker
 from core.llm import get_llm
 from core.memory import create_checkpointer
 from core.observability import (
@@ -82,6 +83,10 @@ class AgentValidationError(AgentError):
     """Raised when an agent receives or produces invalid data."""
 
 
+class AgentBudgetExceededError(AgentError):
+    """Raised when an agent run exceeds its configured USD cost budget."""
+
+
 # ---------------------------------------------------------------------------
 # Shared state schema
 # ---------------------------------------------------------------------------
@@ -135,6 +140,11 @@ class BaseAgent(abc.ABC):
             ``self.tools`` and subclasses may bind them to the LLM via
             ``self.llm.bind_tools(self.tools)`` inside ``build_graph()``.
             Defaults to an empty list when omitted.
+        budget_usd: Maximum USD cost allowed for this agent's LLM calls.
+            Set to ``None`` to disable budget enforcement (default).
+            Set to ``0.0`` is valid but will immediately raise
+            ``AgentBudgetExceededError`` on the first LLM call that
+            incurs any cost — use only for testing.
 
     Raises:
         AgentConfigurationError: If the LLM client cannot be initialised
@@ -148,6 +158,7 @@ class BaseAgent(abc.ABC):
         tools: list[BaseTool] | None = None,
         llm: BaseChatModel | None = None,
         checkpointer: Any | None = None,
+        budget_usd: float | None = None,
     ) -> None:
         self.name: str = name
         self.thread_id: str = thread_id or str(uuid.uuid4())
@@ -168,6 +179,21 @@ class BaseAgent(abc.ABC):
                     f"[{self.name}] Failed to initialise LLM provider "
                     f"'{_settings.llm_provider}': {exc}"
                 ) from exc
+
+        # Resolve effective budget: explicit argument takes precedence over
+        # the settings-level default; None on both sides disables tracking.
+        _effective_budget: float | None = (
+            budget_usd if budget_usd is not None else _settings.pack_default_budget_usd
+        )
+
+        self._cost_tracker: CostTracker | None = None
+        if _effective_budget is not None:
+            self._cost_tracker = CostTracker(budget_usd=_effective_budget)
+            # with_config returns a new Runnable wrapper; it does not mutate the
+            # underlying BaseChatModel object. If _shared_llm is passed from the
+            # API layer, this call creates a per-agent view with the cost tracker
+            # attached while leaving the shared instance unmodified.
+            self.llm = self.llm.with_config({"callbacks": [self._cost_tracker]})
 
         # Pre-bound LLM with tool schemas attached.  Not used by the
         # built-in agents (they call _invoke_llm_with_retry directly),
@@ -309,6 +335,11 @@ class BaseAgent(abc.ABC):
         """Return wall-clock seconds since this agent was instantiated."""
         return time.monotonic() - self._start_time
 
+    @property
+    def cost_usd(self) -> float:
+        """Return total USD cost for this agent's LLM calls so far."""
+        return self._cost_tracker.total_cost_usd if self._cost_tracker else 0.0
+
     def _invoke_llm_with_retry(
         self,
         messages: list[BaseMessage],
@@ -379,6 +410,8 @@ class BaseAgent(abc.ABC):
                         extra={"error": str(exc)},
                     )
                     time.sleep(delay)
+            except BudgetExceededError as exc:
+                raise AgentBudgetExceededError(str(exc)) from exc
             except Exception as exc:
                 err_str = str(exc).lower()
                 if "429" in err_str or "rate" in err_str:

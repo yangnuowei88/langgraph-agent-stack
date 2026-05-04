@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 
 from agents.base_agent import (
+    AgentBudgetExceededError,
     AgentExecutionError,
     AgentTimeoutError,
     AgentValidationError,
@@ -897,3 +898,313 @@ def test_run_stream_active_pipelines_gauge_decremented_on_success() -> None:
 
     mock_gauge.inc.assert_called_once()
     mock_gauge.dec.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Cost tracking — cost_usd in response and budget exceeded (402)
+# ---------------------------------------------------------------------------
+
+
+def test_run_response_includes_cost_usd() -> None:
+    """POST /run must include cost_usd in the response when the pack exposes it."""
+    from core.security import RateLimiter
+
+    permissive = RateLimiter(max_requests=10_000, window_seconds=60.0)
+
+    mock_report = MagicMock(
+        query="What is quantum computing?",
+        executive_summary="summary",
+        key_insights=[],
+        patterns=[],
+        implications=[],
+        confidence=0.9,
+        research_summary="research",
+        metadata={},
+    )
+    mock_report.to_dict = MagicMock(return_value={})
+
+    mock_graph_instance = MagicMock()
+    mock_graph_instance.run.return_value = mock_report
+    # Expose cost_usd on the pipeline instance so _execute() picks it up
+    mock_graph_instance.cost_usd = 0.05
+    mock_graph_instance.__enter__ = MagicMock(return_value=mock_graph_instance)
+    mock_graph_instance.__exit__ = MagicMock(return_value=False)
+    mock_graph_cls = MagicMock(return_value=mock_graph_instance)
+
+    with (
+        patch("api.main.MultiAgentGraph", mock_graph_cls),
+        patch("api.main._rate_limiter", permissive),
+        patch("api.main.get_shared_llm", return_value=MagicMock(spec=True)),
+        patch("api.main.get_shared_checkpointer", return_value=MagicMock()),
+    ):
+        from api.main import app
+
+        with TestClient(app, raise_server_exceptions=False) as client:
+            response = client.post("/run", json={"query": "What is quantum computing?"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "cost_usd" in body
+    assert body["cost_usd"] == 0.05
+
+
+def test_budget_exceeded_returns_402() -> None:
+    """POST /run must return 402 when the pipeline raises AgentBudgetExceededError."""
+    with patch("api.main.MultiAgentGraph") as mock_graph_cls:
+        mock_graph_instance = MagicMock()
+        mock_graph_instance.run.side_effect = AgentBudgetExceededError(
+            "Budget exceeded"
+        )
+        mock_graph_instance.__enter__ = MagicMock(return_value=mock_graph_instance)
+        mock_graph_instance.__exit__ = MagicMock(return_value=False)
+        mock_graph_cls.return_value = mock_graph_instance
+
+        from api.main import app as _app
+
+        with TestClient(_app, raise_server_exceptions=False) as client:
+            response = client.post("/run", json={"query": "What is quantum computing?"})
+
+    assert response.status_code == 402
+    assert "detail" in response.json()
+
+
+def test_research_budget_exceeded_returns_402() -> None:
+    """POST /research must return 402 when ResearchAgent raises AgentBudgetExceededError."""
+    with patch("api.main.ResearchAgent") as mock_cls:
+        inst = MagicMock()
+        inst.run_structured.side_effect = AgentBudgetExceededError("Budget exceeded")
+        mock_cls.return_value = inst
+
+        from api.main import app as _app
+
+        with TestClient(_app, raise_server_exceptions=False) as client:
+            response = client.post(
+                "/research", json={"query": "Explain distributed systems."}
+            )
+
+    assert response.status_code == 402
+    assert "detail" in response.json()
+
+
+# ---------------------------------------------------------------------------
+# GET /packs — service discovery
+# ---------------------------------------------------------------------------
+
+
+def test_list_packs_returns_registered_packs(test_client: TestClient) -> None:
+    """GET /packs must return 200 with at least the research_analysis pack."""
+    response = test_client.get("/packs")
+
+    assert response.status_code == 200
+    packs = response.json()
+    assert isinstance(packs, list)
+    assert len(packs) >= 1
+
+    pack_ids = [p["pack_id"] for p in packs]
+    assert "research_analysis" in pack_ids
+
+    ra_pack = next(p for p in packs if p["pack_id"] == "research_analysis")
+    assert "name" in ra_pack
+    assert "description" in ra_pack
+    assert "input_schema" in ra_pack
+    assert "output_schema" in ra_pack
+    assert isinstance(ra_pack["input_schema"], dict)
+    assert isinstance(ra_pack["output_schema"], dict)
+
+
+# ---------------------------------------------------------------------------
+# POST /packs/research_analysis/run — per-pack dynamic endpoint
+# ---------------------------------------------------------------------------
+
+
+def test_pack_run_endpoint_exists_for_research_analysis(
+    test_client: TestClient,
+    mock_analysis_report: MagicMock,
+) -> None:
+    """POST /packs/research_analysis/run must return 200 with a valid output.
+
+    The dynamic router is wired at lifespan startup by ``test_client``.
+    The route closure captures the real ResearchAnalysisPack class — we
+    patch both __init__ (no-op) and run() so no real LLM or LangGraph call
+    is made.
+    """
+    from domain_packs.research_analysis.pack import ResearchAnalysisPack
+
+    def _noop_init(self, **kwargs):  # type: ignore[override]
+        pass
+
+    with (
+        patch.object(ResearchAnalysisPack, "__init__", _noop_init),
+        patch.object(ResearchAnalysisPack, "run", return_value=mock_analysis_report),
+        patch.object(ResearchAnalysisPack, "close", return_value=None),
+    ):
+        response = test_client.post(
+            "/packs/research_analysis/run",
+            json={"query": "What is a microservice?"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "executive_summary" in body
+
+
+def test_pack_run_rejects_empty_query(test_client: TestClient) -> None:
+    """POST /packs/research_analysis/run with empty query must return 422.
+
+    Validation is enforced by the ResearchAnalysisInput Pydantic model
+    (min_length=1 on the query field) before any LLM call is made.
+    """
+    response = test_client.post(
+        "/packs/research_analysis/run",
+        json={"query": ""},
+    )
+
+    assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Legacy endpoints unchanged
+# ---------------------------------------------------------------------------
+
+
+def test_legacy_run_endpoint_still_works(test_client: TestClient) -> None:
+    """POST /run must still return 200 after per-pack router wiring is added."""
+    response = test_client.post("/run", json={"query": "What is quantum computing?"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "executive_summary" in body
+    assert "key_insights" in body
+    assert "confidence" in body
+
+
+# ---------------------------------------------------------------------------
+# X-Pack-Version headers
+# ---------------------------------------------------------------------------
+
+
+def test_pack_run_returns_x_pack_version_used_header(
+    test_client: TestClient,
+    mock_analysis_report: MagicMock,
+) -> None:
+    """POST /packs/research_analysis/run must return x-pack-version-used header."""
+    from domain_packs.research_analysis.pack import ResearchAnalysisPack
+
+    def _noop_init(self, **kwargs):  # type: ignore[override]
+        pass
+
+    with (
+        patch.object(ResearchAnalysisPack, "__init__", _noop_init),
+        patch.object(ResearchAnalysisPack, "run", return_value=mock_analysis_report),
+        patch.object(ResearchAnalysisPack, "close", return_value=None),
+    ):
+        response = test_client.post(
+            "/packs/research_analysis/run",
+            json={"query": "What is a microservice?"},
+        )
+
+    assert response.status_code == 200
+    assert "x-pack-version-used" in response.headers
+
+
+def test_pack_run_with_x_pack_version_header(
+    test_client: TestClient,
+    mock_analysis_report: MagicMock,
+) -> None:
+    """POST /packs/research_analysis/run with X-Pack-Version: 1.0 returns x-pack-version-used: 1.0."""
+    from domain_packs.research_analysis.pack import ResearchAnalysisPack
+
+    def _noop_init(self, **kwargs):  # type: ignore[override]
+        pass
+
+    with (
+        patch.object(ResearchAnalysisPack, "__init__", _noop_init),
+        patch.object(ResearchAnalysisPack, "run", return_value=mock_analysis_report),
+        patch.object(ResearchAnalysisPack, "close", return_value=None),
+    ):
+        response = test_client.post(
+            "/packs/research_analysis/run",
+            json={"query": "What is a microservice?"},
+            headers={"X-Pack-Version": "1.0"},
+        )
+
+    assert response.status_code == 200
+    assert response.headers.get("x-pack-version-used") == "1.0"
+
+
+def test_pack_run_unknown_version_returns_404(test_client: TestClient) -> None:
+    """POST /packs/research_analysis/run with X-Pack-Version: 99.0 must return 404."""
+    response = test_client.post(
+        "/packs/research_analysis/run",
+        json={"query": "What is a microservice?"},
+        headers={"X-Pack-Version": "99.0"},
+    )
+
+    assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /packs/{pack_id}/versions
+# ---------------------------------------------------------------------------
+
+
+def test_list_pack_versions_returns_list(test_client: TestClient) -> None:
+    """GET /packs/research_analysis/versions must return list with version and weight keys."""
+    response = test_client.get("/packs/research_analysis/versions")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data, list)
+    assert len(data) >= 1
+    assert "version" in data[0]
+    assert "weight" in data[0]
+
+
+def test_list_pack_versions_unknown_pack_returns_404(test_client: TestClient) -> None:
+    """GET /packs/nonexistent/versions must return 404."""
+    response = test_client.get("/packs/nonexistent/versions")
+
+    assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# PATCH /packs/{pack_id}/versions/{version}/weight
+# ---------------------------------------------------------------------------
+
+
+def test_update_pack_version_weight_succeeds(test_client: TestClient) -> None:
+    """PATCH /packs/research_analysis/versions/1.0/weight with valid body returns 200."""
+    response = test_client.patch(
+        "/packs/research_analysis/versions/1.0/weight",
+        json={"weight": 0.5},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["pack_id"] == "research_analysis"
+    assert body["version"] == "1.0"
+    assert body["weight"] == 0.5
+
+
+def test_update_pack_version_weight_unknown_pack_returns_404(
+    test_client: TestClient,
+) -> None:
+    """PATCH /packs/nonexistent/versions/1.0/weight must return 404."""
+    response = test_client.patch(
+        "/packs/nonexistent/versions/1.0/weight",
+        json={"weight": 0.5},
+    )
+
+    assert response.status_code == 404
+
+
+def test_update_pack_version_weight_invalid_body_returns_422(
+    test_client: TestClient,
+) -> None:
+    """PATCH /packs/research_analysis/versions/1.0/weight with missing weight returns 422."""
+    response = test_client.patch(
+        "/packs/research_analysis/versions/1.0/weight",
+        json={"bad": 0.5},
+    )
+
+    assert response.status_code == 422
