@@ -72,12 +72,14 @@ class AnalystAgent(BaseAgent):
         thread_id: str | None = None,
         llm: BaseChatModel | None = None,
         checkpointer: Any | None = None,
+        budget_usd: float | None = None,
     ) -> None:
         super().__init__(
             name="AnalystAgent",
             thread_id=thread_id,
             llm=llm,
             checkpointer=checkpointer,
+            budget_usd=budget_usd,
         )
 
     # ------------------------------------------------------------------

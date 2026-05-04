@@ -263,6 +263,8 @@ def trace_span(
 # Prometheus metrics
 # ---------------------------------------------------------------------------
 
+# pack_run_cost_usd_total Counter is defined in core/cost.py to avoid circular imports
+
 try:
     from prometheus_client import (
         Counter,

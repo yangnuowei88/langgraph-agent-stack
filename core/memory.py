@@ -306,6 +306,8 @@ class RunHistoryStore(Protocol):
         self, session_id: str, limit: int = 50
     ) -> list[dict[str, Any]]: ...
 
+    def get_pack_version_for_session(self, session_id: str, pack_id: str) -> str | None: ...
+
     def health_check(self) -> tuple[str, str]: ...
 
     def close(self) -> None: ...
@@ -626,6 +628,35 @@ class ConversationMemory:
 
         return [self._row_to_dict(row) for row in rows]
 
+    def get_pack_version_for_session(self, session_id: str, pack_id: str) -> str | None:
+        """Return the pack_version last used for this session+pack, or None if no history.
+
+        Args:
+            session_id: The session identifier to look up.
+            pack_id: The pack identifier to filter by.
+
+        Returns:
+            The pack_version string from the most recent matching run, or ``None``
+            when no run exists for this session+pack combination.
+        """
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT metadata_json FROM runs
+                WHERE json_extract(metadata_json, '$.session_id') = ?
+                  AND json_extract(metadata_json, '$.pack_id') = ?
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (session_id, pack_id),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            meta = json.loads(row[0])
+            return meta.get("pack_version")
+        except (json.JSONDecodeError, TypeError):
+            return None
+
     # ------------------------------------------------------------------
     # Health check
     # ------------------------------------------------------------------
@@ -797,6 +828,10 @@ class RedisRunHistory:
         run_ids = self._redis.zrevrange(self._session_key(session_id), 0, limit - 1)
         return [r for rid in run_ids if (r := self.get_run(rid)) is not None]
 
+    def get_pack_version_for_session(self, session_id: str, pack_id: str) -> str | None:
+        """Stub — sticky_session not supported for the Redis backend."""
+        return None
+
     def health_check(self) -> tuple[str, str]:
         try:
             self._redis.ping()
@@ -942,6 +977,10 @@ class PostgresRunHistory:
             )
             rows = cur.fetchall()
         return [self._row_to_dict(row) for row in rows]
+
+    def get_pack_version_for_session(self, session_id: str, pack_id: str) -> str | None:
+        """Stub — sticky_session not supported for the Postgres backend."""
+        return None
 
     def health_check(self) -> tuple[str, str]:
         try:

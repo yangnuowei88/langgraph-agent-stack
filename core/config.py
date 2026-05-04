@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 from functools import lru_cache
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import Field, field_validator, model_validator
@@ -108,6 +109,28 @@ class Settings(BaseSettings):
         ge=1,
         le=32768,
         description="Maximum tokens to generate per LLM call.",
+    )
+
+    default_pack_id: str = Field(
+        default="research_analysis",
+        validation_alias="DEFAULT_PACK_ID",
+        description="Pack ID to use when no pack is specified. Must be registered in PackRegistry.",
+    )
+
+    pack_default_budget_usd: float | None = Field(
+        default=None,
+        validation_alias="PACK_DEFAULT_BUDGET_USD",
+        description=(
+            "Optional default USD cost budget applied to every agent run. "
+            "Overridden per-agent by passing budget_usd= to BaseAgent.__init__. "
+            "Set to None (the default) to disable budget enforcement globally."
+        ),
+    )
+
+    llm_cost_table_path: Path | None = Field(
+        default=None,
+        validation_alias="LLM_COST_TABLE_PATH",
+        description="Path to JSON file with custom LLM pricing. See core/cost.py for format.",
     )
 
     # --- Memory / Persistence ---

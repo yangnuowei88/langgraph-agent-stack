@@ -505,3 +505,65 @@ class TestRetryMetrics:
         fatal = sum(1 for kw in label_kwargs if kw.get("status") == "fatal_error")
         assert retryable == 2  # initial attempt + 1 retry
         assert fatal == 1
+
+
+# ---------------------------------------------------------------------------
+# Budget / CostTracker integration tests
+# ---------------------------------------------------------------------------
+
+
+class TestBudgetIntegration:
+    """Verify BaseAgent budget wiring and AgentBudgetExceededError propagation."""
+
+    def test_agent_cost_usd_returns_zero_when_no_budget_set(self) -> None:
+        """cost_usd is 0.0 when no budget is configured and no tracker is attached."""
+        mock_llm = _build_researcher_llm()
+        # Ensure pack_default_budget_usd is None so no tracker is created.
+        with (
+            patch("agents.base_agent.get_llm", return_value=mock_llm),
+            patch(
+                "agents.base_agent.get_settings",
+                return_value=MagicMock(
+                    llm_provider="mock",
+                    memory_backend=MagicMock(value="sqlite"),
+                    max_step_count=20,
+                    pack_default_budget_usd=None,
+                    llm_config=MagicMock(),
+                ),
+            ),
+        ):
+            agent = ResearchAgent()
+
+        assert agent._cost_tracker is None
+        assert agent.cost_usd == 0.0
+
+    def test_agent_budget_exceeded_wraps_to_agent_error(self) -> None:
+        """BudgetExceededError raised inside on_llm_end is wrapped as AgentBudgetExceededError."""
+        from agents.base_agent import AgentBudgetExceededError
+        from core.cost import BudgetExceededError, CostTracker
+
+        mock_llm = MagicMock()
+        # with_config must return something that still behaves like an LLM mock.
+        configured_llm = MagicMock()
+        configured_llm.bind_tools.return_value = configured_llm
+        mock_llm.with_config.return_value = configured_llm
+        mock_llm.bind_tools.return_value = mock_llm
+
+        with patch("agents.base_agent.get_llm", return_value=mock_llm):
+            agent = ResearchAgent(budget_usd=0.001)
+
+        # Replace the tracker with one whose on_llm_end raises BudgetExceededError.
+        boom_tracker = MagicMock(spec=CostTracker)
+        boom_tracker.total_cost_usd = 0.999
+        agent._cost_tracker = boom_tracker
+
+        # Make the configured LLM's invoke raise BudgetExceededError directly
+        # (simulating a callback propagating the error up through LangChain).
+        configured_llm.invoke.side_effect = BudgetExceededError(
+            budget=0.001, actual=0.999
+        )
+
+        with pytest.raises(AgentBudgetExceededError):
+            agent._invoke_llm_with_retry(
+                [HumanMessage(content="test")], max_retries=0
+            )
