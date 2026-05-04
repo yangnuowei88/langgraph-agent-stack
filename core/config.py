@@ -110,6 +110,12 @@ class Settings(BaseSettings):
         description="Maximum tokens to generate per LLM call.",
     )
 
+    default_pack_id: str = Field(
+        default="research_analysis",
+        validation_alias="DEFAULT_PACK_ID",
+        description="Pack ID to use when no pack is specified. Must be registered in PackRegistry.",
+    )
+
     # --- Memory / Persistence ---
     memory_backend: MemoryBackend = Field(
         default=MemoryBackend.SQLITE,
