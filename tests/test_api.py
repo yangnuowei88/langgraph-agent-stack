@@ -950,6 +950,10 @@ def test_run_response_includes_cost_usd() -> None:
 
 def test_budget_exceeded_returns_402() -> None:
     """POST /run must return 402 when the pipeline raises AgentBudgetExceededError."""
+    from core.security import RateLimiter
+
+    permissive = RateLimiter(max_requests=10_000, window_seconds=60.0)
+
     with patch("api.main.MultiAgentGraph") as mock_graph_cls:
         mock_graph_instance = MagicMock()
         mock_graph_instance.run.side_effect = AgentBudgetExceededError(
@@ -959,10 +963,17 @@ def test_budget_exceeded_returns_402() -> None:
         mock_graph_instance.__exit__ = MagicMock(return_value=False)
         mock_graph_cls.return_value = mock_graph_instance
 
-        from api.main import app as _app
+        with (
+            patch("api.main._rate_limiter", permissive),
+            patch("api.main.get_shared_llm", return_value=MagicMock(spec=True)),
+            patch("api.main.get_shared_checkpointer", return_value=MagicMock()),
+        ):
+            from api.main import app as _app
 
-        with TestClient(_app, raise_server_exceptions=False) as client:
-            response = client.post("/run", json={"query": "What is quantum computing?"})
+            with TestClient(_app, raise_server_exceptions=False) as client:
+                response = client.post(
+                    "/run", json={"query": "What is quantum computing?"}
+                )
 
     assert response.status_code == 402
     assert "detail" in response.json()
@@ -970,17 +981,26 @@ def test_budget_exceeded_returns_402() -> None:
 
 def test_research_budget_exceeded_returns_402() -> None:
     """POST /research must return 402 when ResearchAgent raises AgentBudgetExceededError."""
+    from core.security import RateLimiter
+
+    permissive = RateLimiter(max_requests=10_000, window_seconds=60.0)
+
     with patch("api.main.ResearchAgent") as mock_cls:
         inst = MagicMock()
         inst.run_structured.side_effect = AgentBudgetExceededError("Budget exceeded")
         mock_cls.return_value = inst
 
-        from api.main import app as _app
+        with (
+            patch("api.main._rate_limiter", permissive),
+            patch("api.main.get_shared_llm", return_value=MagicMock(spec=True)),
+            patch("api.main.get_shared_checkpointer", return_value=MagicMock()),
+        ):
+            from api.main import app as _app
 
-        with TestClient(_app, raise_server_exceptions=False) as client:
-            response = client.post(
-                "/research", json={"query": "Explain distributed systems."}
-            )
+            with TestClient(_app, raise_server_exceptions=False) as client:
+                response = client.post(
+                    "/research", json={"query": "Explain distributed systems."}
+                )
 
     assert response.status_code == 402
     assert "detail" in response.json()
