@@ -14,14 +14,12 @@ Covers:
 from __future__ import annotations
 
 import random
-from typing import Any
 from collections.abc import AsyncGenerator
-
-import pytest
-
 from platform.base_pack import BaseDomainPack
 from platform.registry import PackRegistry, PackVersion
+from typing import Any
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # Minimal concrete packs for testing
@@ -169,7 +167,9 @@ def test_register_same_pack_id_same_version_replaces(clean_registry) -> None:
     assert versions[0].pack_cls is _PackV1Replacement
 
 
-def test_register_same_pack_id_same_version_emits_warning(clean_registry, caplog) -> None:
+def test_register_same_pack_id_same_version_emits_warning(
+    clean_registry, caplog
+) -> None:
     """Re-registering the same pack_id+version logs a warning."""
     import logging
 
@@ -226,7 +226,9 @@ def test_get_respects_zero_weight(clean_registry) -> None:
     # All 50 calls must return _PackV1 (weight=1.0), never _PackV2 (weight=0.0)
     for _ in range(50):
         result = PackRegistry.get("zero_weight_pack")
-        assert result is _PackV1, "Only _PackV1 should be returned when _PackV2 has weight=0"
+        assert (
+            result is _PackV1
+        ), "Only _PackV1 should be returned when _PackV2 has weight=0"
 
 
 def test_get_with_seeded_random_is_deterministic(clean_registry) -> None:

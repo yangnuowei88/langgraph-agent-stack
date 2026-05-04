@@ -122,8 +122,7 @@ class PackRegistry:
         if pack_id not in cls._registry:
             available = list(cls._registry)
             raise KeyError(
-                f"Pack '{pack_id}' is not registered. "
-                f"Available packs: {available}"
+                f"Pack '{pack_id}' is not registered. " f"Available packs: {available}"
             )
         versions = cls._registry[pack_id]
 
@@ -141,9 +140,7 @@ class PackRegistry:
             return versions[0].pack_cls
         weights = [pv.weight for pv in versions]
         if sum(weights) == 0.0:
-            raise KeyError(
-                f"Pack '{pack_id}' has no versions with positive weight."
-            )
+            raise KeyError(f"Pack '{pack_id}' has no versions with positive weight.")
         (selected,) = random.choices(versions, weights=weights, k=1)
         return selected.pack_cls
 
@@ -164,8 +161,7 @@ class PackRegistry:
         if pack_id not in cls._registry:
             available = list(cls._registry)
             raise KeyError(
-                f"Pack '{pack_id}' is not registered. "
-                f"Available packs: {available}"
+                f"Pack '{pack_id}' is not registered. " f"Available packs: {available}"
             )
         registry_versions = cls._registry[pack_id]
 
@@ -195,8 +191,7 @@ class PackRegistry:
         if pack_id not in cls._registry:
             available = list(cls._registry)
             raise KeyError(
-                f"Pack '{pack_id}' is not registered. "
-                f"Available packs: {available}"
+                f"Pack '{pack_id}' is not registered. " f"Available packs: {available}"
             )
         return list(cls._registry[pack_id])
 

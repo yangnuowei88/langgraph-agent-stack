@@ -32,10 +32,10 @@ import logging
 import threading
 import time
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 from fastapi import (
     APIRouter,
@@ -427,7 +427,9 @@ def _build_pack_router(
         # Sticky session: if no explicit version pin, check session history
         if requested_version is None and _shared_memory is not None:
             session_id_for_sticky = getattr(body, "session_id", None) or None
-            if session_id_for_sticky and hasattr(_shared_memory, "get_pack_version_for_session"):
+            if session_id_for_sticky and hasattr(
+                _shared_memory, "get_pack_version_for_session"
+            ):
                 requested_version = _shared_memory.get_pack_version_for_session(
                     session_id_for_sticky, pack_id
                 )
@@ -435,11 +437,17 @@ def _build_pack_router(
         try:
             pack_cls_to_use = PackRegistry.get(pack_id, version=requested_version)
         except KeyError as exc:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+            ) from exc
 
         # Determine the version string actually used (for the response header)
         used_version = next(
-            (pv.version for pv in PackRegistry._get_versions(pack_id) if pv.pack_cls is pack_cls_to_use),
+            (
+                pv.version
+                for pv in PackRegistry._get_versions(pack_id)
+                if pv.pack_cls is pack_cls_to_use
+            ),
             "unknown",
         )
         response.headers["X-Pack-Version-Used"] = used_version
@@ -467,7 +475,9 @@ def _build_pack_router(
                     _shared_memory.save_run(
                         run_id=run_id,
                         query=query,
-                        result={} if not hasattr(result, "to_dict") else result.to_dict(),
+                        result=(
+                            {} if not hasattr(result, "to_dict") else result.to_dict()
+                        ),
                         metadata={
                             "pack_id": pack_id,
                             "pack_version": used_version,
@@ -518,10 +528,16 @@ def _build_pack_router(
         try:
             pack_cls_to_use = PackRegistry.get(pack_id, version=requested_version)
         except KeyError as exc:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+            ) from exc
 
         used_version = next(
-            (pv.version for pv in PackRegistry._get_versions(pack_id) if pv.pack_cls is pack_cls_to_use),
+            (
+                pv.version
+                for pv in PackRegistry._get_versions(pack_id)
+                if pv.pack_cls is pack_cls_to_use
+            ),
             "unknown",
         )
 
@@ -541,7 +557,8 @@ def _build_pack_router(
                 checkpointer=get_shared_checkpointer(),
             )
             try:
-                async for event in pack.stream_events(query):
+                _events = pack.stream_events(query)
+                async for event in cast(AsyncIterator[dict[str, Any]], _events):
                     yield f"data: {json.dumps(event, default=str)}\n\n"
             finally:
                 pack.close()
@@ -1625,7 +1642,9 @@ async def list_pack_versions(pack_id: str) -> list[dict[str, Any]]:
     try:
         versions = PackRegistry._get_versions(pack_id)
     except KeyError:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Pack '{pack_id}' not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Pack '{pack_id}' not found."
+        )
     return [{"version": pv.version, "weight": pv.weight} for pv in versions]
 
 
@@ -1649,7 +1668,11 @@ async def update_pack_version_weight(
     try:
         PackRegistry.set_weights(pack_id, {version: float(weight)})
     except KeyError as exc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
     return {"pack_id": pack_id, "version": version, "weight": float(weight)}

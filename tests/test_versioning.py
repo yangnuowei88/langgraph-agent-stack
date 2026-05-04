@@ -14,11 +14,10 @@ from __future__ import annotations
 import uuid
 from unittest.mock import MagicMock, patch
 
-import api.main as api_module
-from api.main import app
-from core.memory import ConversationMemory
 from fastapi.testclient import TestClient
 
+from api.main import app
+from core.memory import ConversationMemory
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -59,8 +58,9 @@ def _make_pack_instance_mock(report=None):
 
 def test_run_history_records_pack_version() -> None:
     """POST /packs/research_analysis/run must call save_run with pack_version in metadata."""
-    from core.security import RateLimiter
     from platform.registry import PackRegistry
+
+    from core.security import RateLimiter
 
     report = _make_mock_analysis_report()
     permissive = RateLimiter(max_requests=10_000, window_seconds=60.0)
@@ -95,12 +95,12 @@ def test_run_history_records_pack_version() -> None:
                     json={"query": "What is quantum computing?"},
                 )
 
-    assert response.status_code == 200, (
-        f"Expected 200, got {response.status_code}: {response.text}"
-    )
-    assert mock_memory.save_run.called, (
-        "save_run must be called after a successful pack run"
-    )
+    assert (
+        response.status_code == 200
+    ), f"Expected 200, got {response.status_code}: {response.text}"
+    assert (
+        mock_memory.save_run.called
+    ), "save_run must be called after a successful pack run"
 
     call_kwargs = mock_memory.save_run.call_args
     # save_run is called with keyword args: run_id, query, result, metadata
@@ -146,15 +146,19 @@ def test_sticky_session_pins_version_on_second_call() -> None:
     requested_version = None  # no X-Pack-Version header
     if requested_version is None and mock_memory is not None:
         session_id_for_sticky = getattr(body, "session_id", None) or None
-        if session_id_for_sticky and hasattr(mock_memory, "get_pack_version_for_session"):
+        if session_id_for_sticky and hasattr(
+            mock_memory, "get_pack_version_for_session"
+        ):
             requested_version = mock_memory.get_pack_version_for_session(
                 session_id_for_sticky, pack_id
             )
 
-    assert requested_version == "1.0", (
-        f"Sticky version should be '1.0' but got {requested_version!r}"
+    assert (
+        requested_version == "1.0"
+    ), f"Sticky version should be '1.0' but got {requested_version!r}"
+    mock_memory.get_pack_version_for_session.assert_called_once_with(
+        "sess-001", "research_analysis"
     )
-    mock_memory.get_pack_version_for_session.assert_called_once_with("sess-001", "research_analysis")
 
 
 def test_sticky_session_not_triggered_without_session_id() -> None:
@@ -172,7 +176,9 @@ def test_sticky_session_not_triggered_without_session_id() -> None:
     requested_version = None
     if requested_version is None and mock_memory is not None:
         session_id_for_sticky = getattr(body, "session_id", None) or None
-        if session_id_for_sticky and hasattr(mock_memory, "get_pack_version_for_session"):
+        if session_id_for_sticky and hasattr(
+            mock_memory, "get_pack_version_for_session"
+        ):
             requested_version = mock_memory.get_pack_version_for_session(
                 session_id_for_sticky, pack_id
             )

@@ -9,9 +9,8 @@ Register manually before use:
 
 import uuid
 from collections.abc import AsyncGenerator
-from typing import Any, ClassVar
-
 from platform.base_pack import BaseDomainPack
+from typing import Any, ClassVar
 
 from examples.custom_pack.schemas import SummaryInput, SummaryOutput
 
@@ -31,7 +30,9 @@ class SummariserPack(BaseDomainPack):
         checkpointer: Any | None = None,
         budget_usd: float | None = None,
     ) -> None:
-        super().__init__(run_id=run_id, llm=llm, checkpointer=checkpointer, budget_usd=budget_usd)
+        super().__init__(
+            run_id=run_id, llm=llm, checkpointer=checkpointer, budget_usd=budget_usd
+        )
         self.run_id = run_id or str(uuid.uuid4())
 
     def _build_prompt(self, inp: SummaryInput) -> str:

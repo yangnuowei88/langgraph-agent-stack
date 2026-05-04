@@ -261,7 +261,11 @@ def test_get_pack_version_for_session_returns_version():
         run_id="run-1",
         query="test query",
         result={},
-        metadata={"session_id": "session-1", "pack_id": "research_analysis", "pack_version": "1.0"},
+        metadata={
+            "session_id": "session-1",
+            "pack_id": "research_analysis",
+            "pack_version": "1.0",
+        },
     )
     result = mem.get_pack_version_for_session("session-1", "research_analysis")
     assert result == "1.0"
@@ -272,11 +276,20 @@ def test_get_pack_version_for_session_returns_most_recent():
     """When multiple runs exist, the most recent pack_version is returned."""
     mem = ConversationMemory(":memory:")
     import time
-    mem.save_run(run_id="run-1", query="q1", result={},
-                 metadata={"session_id": "s1", "pack_id": "ra", "pack_version": "1.0"})
+
+    mem.save_run(
+        run_id="run-1",
+        query="q1",
+        result={},
+        metadata={"session_id": "s1", "pack_id": "ra", "pack_version": "1.0"},
+    )
     time.sleep(0.01)
-    mem.save_run(run_id="run-2", query="q2", result={},
-                 metadata={"session_id": "s1", "pack_id": "ra", "pack_version": "2.0"})
+    mem.save_run(
+        run_id="run-2",
+        query="q2",
+        result={},
+        metadata={"session_id": "s1", "pack_id": "ra", "pack_version": "2.0"},
+    )
     result = mem.get_pack_version_for_session("s1", "ra")
     assert result == "2.0"
     mem.close()
@@ -285,10 +298,18 @@ def test_get_pack_version_for_session_returns_most_recent():
 def test_get_pack_version_for_session_filters_by_pack_id():
     """Different pack_ids for same session are isolated."""
     mem = ConversationMemory(":memory:")
-    mem.save_run(run_id="run-1", query="q", result={},
-                 metadata={"session_id": "s1", "pack_id": "pack_a", "pack_version": "1.0"})
-    mem.save_run(run_id="run-2", query="q", result={},
-                 metadata={"session_id": "s1", "pack_id": "pack_b", "pack_version": "2.0"})
+    mem.save_run(
+        run_id="run-1",
+        query="q",
+        result={},
+        metadata={"session_id": "s1", "pack_id": "pack_a", "pack_version": "1.0"},
+    )
+    mem.save_run(
+        run_id="run-2",
+        query="q",
+        result={},
+        metadata={"session_id": "s1", "pack_id": "pack_b", "pack_version": "2.0"},
+    )
     assert mem.get_pack_version_for_session("s1", "pack_a") == "1.0"
     assert mem.get_pack_version_for_session("s1", "pack_b") == "2.0"
     mem.close()
@@ -297,8 +318,12 @@ def test_get_pack_version_for_session_filters_by_pack_id():
 def test_get_pack_version_for_session_cross_session_isolation():
     """Different sessions do not bleed into each other."""
     mem = ConversationMemory(":memory:")
-    mem.save_run(run_id="run-1", query="q", result={},
-                 metadata={"session_id": "session-A", "pack_id": "ra", "pack_version": "1.0"})
+    mem.save_run(
+        run_id="run-1",
+        query="q",
+        result={},
+        metadata={"session_id": "session-A", "pack_id": "ra", "pack_version": "1.0"},
+    )
     result = mem.get_pack_version_for_session("session-B", "ra")
     assert result is None
     mem.close()

@@ -564,6 +564,4 @@ class TestBudgetIntegration:
         )
 
         with pytest.raises(AgentBudgetExceededError):
-            agent._invoke_llm_with_retry(
-                [HumanMessage(content="test")], max_retries=0
-            )
+            agent._invoke_llm_with_retry([HumanMessage(content="test")], max_retries=0)

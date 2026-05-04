@@ -188,12 +188,12 @@ def test_list_packs_with_metadata_includes_json_schema() -> None:
         assert isinstance(input_js, dict)
         assert isinstance(output_js, dict)
         # JSON Schema standard: top-level dict must contain 'type' or 'properties'
-        assert "type" in input_js or "properties" in input_js, (
-            f"input_schema for {item['pack_id']} is not a valid JSON Schema dict: {input_js}"
-        )
-        assert "type" in output_js or "properties" in output_js, (
-            f"output_schema for {item['pack_id']} is not a valid JSON Schema dict: {output_js}"
-        )
+        assert (
+            "type" in input_js or "properties" in input_js
+        ), f"input_schema for {item['pack_id']} is not a valid JSON Schema dict: {input_js}"
+        assert (
+            "type" in output_js or "properties" in output_js
+        ), f"output_schema for {item['pack_id']} is not a valid JSON Schema dict: {output_js}"
 
 
 # ---------------------------------------------------------------------------
@@ -227,6 +227,7 @@ def test_registry_list_packs_returns_sorted_list() -> None:
 
 def test_registry_register_without_pack_id_raises() -> None:
     """Registering a class without ``pack_id`` must raise ValueError."""
+
     class BadPack(BaseDomainPack):
         pass
 

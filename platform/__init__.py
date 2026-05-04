@@ -28,11 +28,14 @@ _THIS_PKG = sys.modules.get("platform")  # our partially-initialised local pkg
 
 # Find the real stdlib platform.py by searching non-project paths
 _stdlib_spec = None
-_project_root = __file__.rsplit("/platform/", 1)[0]  # e.g. /home/.../langgraph-agent-stack
+_project_root = __file__.rsplit("/platform/", 1)[
+    0
+]  # e.g. /home/.../langgraph-agent-stack
 for _path_entry in sys.path:
     if _path_entry == _project_root or _path_entry == "":
         continue
     import os as _os
+
     _candidate = _os.path.join(_path_entry, "platform.py")
     if _os.path.isfile(_candidate):
         _stdlib_spec = importlib.util.spec_from_file_location("platform", _candidate)
@@ -51,6 +54,13 @@ if _stdlib_spec is not None and _stdlib_spec.loader is not None:
     # Restore our local package as the canonical 'platform' module.
     if _THIS_PKG is not None:
         sys.modules["platform"] = _THIS_PKG
+        # Re-export stdlib ``platform`` API so third-party code (SQLAlchemy,
+        # testcontainers, ``from platform import system``, etc.) keeps working
+        # after this package replaces ``sys.modules['platform']``.
+        for _name in dir(_stdlib_platform_mod):
+            if _name.startswith("_"):
+                continue
+            setattr(_THIS_PKG, _name, getattr(_stdlib_platform_mod, _name))
 
 from platform.base_pack import BaseDomainPack  # noqa: E402
 from platform.registry import PackRegistry  # noqa: E402

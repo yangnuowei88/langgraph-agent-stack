@@ -310,7 +310,7 @@ class TestGraphWithSqliteSaver:
             SqliteSaver.from_conn_string(db_path) as saver,
             patch("agents.base_agent.get_llm", return_value=mock_llm),
             patch("agents.base_agent.create_checkpointer", return_value=saver),
-            patch("core.graph.create_checkpointer", return_value=saver),
+            patch("core.memory.create_checkpointer", return_value=saver),
         ):
             graph = MultiAgentGraph(
                 run_id="e2e-sqlite-test",
@@ -367,7 +367,7 @@ class TestGraphWithPostgresSaver:
                         "agents.base_agent.create_checkpointer",
                         return_value=saver,
                     ),
-                    patch("core.graph.create_checkpointer", return_value=saver),
+                    patch("core.memory.create_checkpointer", return_value=saver),
                 ):
                     graph = MultiAgentGraph(
                         run_id="e2e-postgres-test",
@@ -423,7 +423,7 @@ class TestGraphWithRedisSaver:
                         "agents.base_agent.create_checkpointer",
                         return_value=saver,
                     ),
-                    patch("core.graph.create_checkpointer", return_value=saver),
+                    patch("core.memory.create_checkpointer", return_value=saver),
                 ):
                     graph = MultiAgentGraph(
                         run_id="e2e-redis-test",

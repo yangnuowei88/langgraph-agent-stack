@@ -220,3 +220,7 @@ def get_llm(config: LLMConfig) -> BaseChatModel:
                 f"Unknown LLM provider: {config.provider!r}. "
                 "Valid providers: anthropic | openai | google | bedrock | azure | ollama | mock"
             )
+
+
+# LangChain constructors diverge from pyright stubs across releases.
+# pyright: reportCallIssue=false

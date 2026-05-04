@@ -55,7 +55,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, cast, runtime_checkable
 
 from langgraph.checkpoint.memory import MemorySaver
 
@@ -306,7 +306,9 @@ class RunHistoryStore(Protocol):
         self, session_id: str, limit: int = 50
     ) -> list[dict[str, Any]]: ...
 
-    def get_pack_version_for_session(self, session_id: str, pack_id: str) -> str | None: ...
+    def get_pack_version_for_session(
+        self, session_id: str, pack_id: str
+    ) -> str | None: ...
 
     def health_check(self) -> tuple[str, str]: ...
 
@@ -807,7 +809,10 @@ class RedisRunHistory:
         pipe.execute()
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
-        data = self._redis.hgetall(self._run_key(run_id))
+        data = cast(
+            dict[str, str],
+            self._redis.hgetall(self._run_key(run_id)),
+        )
         if not data:
             return None
         return self._decode(data)
@@ -815,7 +820,10 @@ class RedisRunHistory:
     def list_runs(self, limit: int = 10) -> list[dict[str, Any]]:
         if limit < 1:
             raise ValueError(f"list_runs: limit must be >= 1, got {limit}.")
-        run_ids = self._redis.zrevrange(self._timeline_key(), 0, limit - 1)
+        run_ids = cast(
+            list[str],
+            self._redis.zrevrange(self._timeline_key(), 0, limit - 1),
+        )
         return [r for rid in run_ids if (r := self.get_run(rid)) is not None]
 
     def list_runs_by_session(
@@ -825,7 +833,10 @@ class RedisRunHistory:
             raise ValueError("list_runs_by_session: session_id must not be empty.")
         if limit < 1:
             raise ValueError(f"list_runs_by_session: limit must be >= 1, got {limit}.")
-        run_ids = self._redis.zrevrange(self._session_key(session_id), 0, limit - 1)
+        run_ids = cast(
+            list[str],
+            self._redis.zrevrange(self._session_key(session_id), 0, limit - 1),
+        )
         return [r for rid in run_ids if (r := self.get_run(rid)) is not None]
 
     def get_pack_version_for_session(self, session_id: str, pack_id: str) -> str | None:

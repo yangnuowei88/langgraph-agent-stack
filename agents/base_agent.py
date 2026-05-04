@@ -19,7 +19,7 @@ import logging
 import random
 import time
 import uuid
-from typing import Any
+from typing import Any, cast
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage
@@ -193,7 +193,10 @@ class BaseAgent(abc.ABC):
             # underlying BaseChatModel object. If _shared_llm is passed from the
             # API layer, this call creates a per-agent view with the cost tracker
             # attached while leaving the shared instance unmodified.
-            self.llm = self.llm.with_config({"callbacks": [self._cost_tracker]})
+            self.llm = cast(
+                BaseChatModel,
+                self.llm.with_config({"callbacks": [self._cost_tracker]}),
+            )
 
         # Pre-bound LLM with tool schemas attached.  Not used by the
         # built-in agents (they call _invoke_llm_with_retry directly),

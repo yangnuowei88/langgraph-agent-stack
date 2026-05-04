@@ -34,7 +34,7 @@ import re
 import threading
 import time
 from collections import deque
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, cast, runtime_checkable
 
 logger = logging.getLogger(__name__)
 
@@ -357,7 +357,7 @@ return max_req - count - 1
             )
             if result is None:
                 return True  # fail-open
-            return int(result) >= 0  # -1 = bloqué, >= 0 = autorisé (0 = dernier slot)
+            return int(cast(int | str, result)) >= 0  # -1 = bloqué, >= 0 = autorisé
         except Exception as exc:
             logger.warning(
                 "Redis rate limiter unreachable — failing open (request allowed)",
@@ -372,8 +372,8 @@ return max_req - count - 1
         key = f"{self._prefix}{ip}"
         try:
             self._redis.zremrangebyscore(key, "-inf", cutoff)
-            count = self._redis.zcard(key)
-            return max(0, self.max_requests - int(count))
+            count = cast(int, self._redis.zcard(key))
+            return max(0, self.max_requests - count)
         except Exception:
             return self.max_requests
 

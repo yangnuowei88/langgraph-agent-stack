@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 import sys
 from unittest.mock import MagicMock, patch
 
@@ -34,15 +35,26 @@ class TestGetLlmAnthropic:
             with pytest.raises(ValueError, match="anthropic_api_key"):
                 get_llm(config)
 
-    def test_raises_on_import_error(self):
-        original = sys.modules.pop("langchain_anthropic", None)
-        try:
-            config = LLMConfig(provider="anthropic", anthropic_api_key="sk-ant-test123")
-            with pytest.raises(ImportError):
-                get_llm(config)
-        finally:
-            if original is not None:
-                sys.modules["langchain_anthropic"] = original
+    def test_raises_on_import_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """When ``langchain_anthropic`` cannot be loaded, get_llm must raise ImportError."""
+        real_import = builtins.__import__
+
+        def _guard_import(
+            name: str,
+            globals_arg: dict[str, object] | None = None,
+            locals_arg: dict[str, object] | None = None,
+            fromlist: tuple[str, ...] = (),
+            level: int = 0,
+        ):
+            if level == 0 and name == "langchain_anthropic":
+                raise ImportError("simulated missing langchain_anthropic")
+            return real_import(name, globals_arg, locals_arg, fromlist, level)
+
+        monkeypatch.setattr(builtins, "__import__", _guard_import)
+        monkeypatch.delitem(sys.modules, "langchain_anthropic", raising=False)
+        config = LLMConfig(provider="anthropic", anthropic_api_key="sk-ant-test123")
+        with pytest.raises(ImportError):
+            get_llm(config)
 
 
 class TestGetLlmOpenAI:
