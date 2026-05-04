@@ -1,24 +1,32 @@
 # Design Doc — Platform Kernel
 
-**Date** : 2026-04-21
-**Statut** : Implémenté
+**Date** : 2026-04-21  
+**Statut** : Implémenté (avec extensions au-delà du périmètre minimal initial — voir ci-dessous)  
 **Auteur** : Sprint platform kernel
 
 ---
 
 ## Objectif et périmètre
 
-Ce sprint introduit un **platform kernel** au-dessus du template LangGraph existant. L'objectif est de standardiser la façon dont les pipelines multi-agents sont déclarés, enregistrés et résolus, afin de faciliter l'ajout futur de "domain packs" métier sans modifier l'infrastructure API.
+Ce sprint introduit un **platform kernel** au-dessus du template LangGraph existant. L'objectif est de standardiser la façon dont les pipelines multi-agents sont déclarés, enregistrés et résolus, afin de faciliter l'ajout futur de « domain packs » métier sans dupliquer l'infrastructure API.
 
-**Périmètre du sprint :**
+### Périmètre minimal initial (Sprint 1 — intention)
 
 - Définir un contrat abstrait (`BaseDomainPack`) que tout pipeline doit respecter.
-- Créer un registre explicite (`PackRegistry`) pour découvrir et résoudre les packs disponibles.
-- Migrer `MultiAgentGraph` (défini dans `core/graph.py`) vers le premier domain pack : `ResearchAnalysisPack`.
-- Assurer la rétrocompatibilité totale pour les consommateurs existants.
+- Créer un registre explicite (`PackRegistry`) pour découvrir et résoudre les packs disponibles (**Approche B** : enregistrement ligne à ligne dans `platform/__init__.py`, pas d'auto-discovery).
+- Migrer `MultiAgentGraph` (anciennement dans `core/graph.py`) vers le premier domain pack : `ResearchAnalysisPack`.
+- Assurer la rétrocompatibilité pour les consommateurs existants (`MultiAgentGraph = ResearchAnalysisPack`).
 - Ajouter le paramètre de configuration `DEFAULT_PACK_ID`.
 
-**Hors périmètre :** chargement dynamique, API de contrôle plane, connecteurs inter-packs, versionnement des packs.
+### Extensions réellement implémentées (au-delà du minimal ci-dessus)
+
+Le code inclut également : **plusieurs versions par `pack_id`** (`PackVersion`, poids, sélection pondérée ou version **explicite**), **`get_schemas`** / **`list_packs_with_metadata`**, attributs de classe **`version`**, **`input_schema` / `output_schema`**, **`budget_usd`** sur le constructeur du pack, et **endpoints HTTP** pour métadonnées des packs et ajustement des poids (`api/main.py`). Ces points ne remplacent pas l'Approche B : **l'enregistrement reste explicite** dans `platform/__init__.py`.
+
+### Hors périmètre (toujours vrai)
+
+Chargement dynamique sans modifier le code du noyau, **connecteurs inter-packs** dédiés, **hot reload** sans redémarrage du processus.
+
+*(Note : une « API de contrôle plane » **complète** — ex. activation globale arbitraire sans lien avec le déploiement — n'est pas implémentée ; une **découverte HTTP** et la **mise à jour des poids** de version existent pour les packs déjà enregistrés.)*
 
 ---
 
@@ -34,11 +42,11 @@ Chaque domain pack est un package Python installable. Au démarrage, le registre
 
 ### Approche B — Registre statique avec enregistrement explicite (retenu)
 
-Un dict de classe partagé sur `PackRegistry`. Les packs sont enregistrés ligne à ligne dans `platform/__init__.py` à l'import du package. Pas d'auto-discovery, pas de magie.
+Un registre de classe partagé sur `PackRegistry`. Les packs sont enregistrés dans `platform/__init__.py` à l'import du package. Pas d'auto-discovery par fichiers ou entry points.
 
-**Avantages** : comportement entièrement déterministe, facile à lire et à déboguer, pas de dépendance à des mécanismes Python avancés, facilement testable (`_reset()`).
+**Avantages** : comportement déterministe, lisible, testable (`PackRegistry._reset()`).
 
-**Inconvénients** : chaque nouveau pack nécessite une modification de `platform/__init__.py`.
+**Inconvénients** : chaque nouveau pack nécessite une modification de `platform/__init__.py` (toujours vrai).
 
 ### Approche C — Configuration déclarative (YAML/TOML)
 
@@ -46,11 +54,11 @@ Les packs disponibles sont listés dans un fichier de configuration. Le registre
 
 **Avantages** : configuration externalisée, possible de changer les packs sans modification de code.
 
-**Inconvénients** : introduce un loading dynamique fragile, les erreurs de typo dans le YAML échouent à l'exécution plutôt qu'à l'import, complexité accrue sans bénéfice immédiat.
+**Inconvénients** : loading dynamique fragile, erreurs de configuration à l'exécution, complexité accrue sans bénéfice immédiat.
 
 ### Décision
 
-**Approche B retenue.** La simplicité et la lisibilité priment à ce stade. L'auto-discovery pourra être ajouté en sprint 2 si le nombre de packs le justifie.
+**Approche B retenue** pour l'enregistrement. Les versions multiples et les poids sont une **couche additive** au-dessus du même registre explicite (voir `platform/registry.py`).
 
 ---
 
@@ -58,178 +66,114 @@ Les packs disponibles sont listés dans un fichier de configuration. Le registre
 
 ```
 platform/
-  __init__.py           # Importe et enregistre tous les packs built-in au démarrage
-  base_pack.py          # ABC BaseDomainPack
-  registry.py           # PackRegistry — dict statique
+  __init__.py           # Importe et enregistre les packs built-in
+  base_pack.py          # ABC BaseDomainPack (+ version, schémas, budget_usd)
+  registry.py           # PackRegistry, PackVersion
 
 domain_packs/
-  __init__.py
   research_analysis/
-    __init__.py
-    pack.py             # ResearchAnalysisPack (migré de core/graph.py)
+    pack.py             # ResearchAnalysisPack
+    schemas.py          # Modèles d'entrée/sortie (pattern recommandé)
 
 core/
-  config.py             # + DEFAULT_PACK_ID setting
+  config.py             # DEFAULT_PACK_ID, budgets, etc.
   graph.py              # Alias : MultiAgentGraph = ResearchAnalysisPack
 ```
 
-Le flux de résolution au démarrage de l'API est :
+Flux de résolution typique au démarrage de l'API :
 
-1. L'import de `platform` déclenche `platform/__init__.py`, qui enregistre `ResearchAnalysisPack` dans `PackRegistry`.
-2. Le lifespan FastAPI lit `settings.default_pack_id` (valeur par défaut : `"research_analysis"`).
-3. Il appelle `PackRegistry.get(default_pack_id)` pour obtenir la classe du pack actif.
-4. La classe est instanciée à la demande dans chaque requête avec les dépendances partagées (`llm`, `checkpointer`).
+1. L'import de `platform` exécute `platform/__init__.py`, qui appelle `PackRegistry.register(ResearchAnalysisPack)`.
+2. Le lifespan FastAPI lit `settings.default_pack_id` (défaut : `"research_analysis"`).
+3. Il appelle `PackRegistry.get(default_pack_id)` pour déterminer la classe du pack par défaut (`_active_pack_cls`).
+4. Les routes legacy (`/run`, etc.) combinent ce résultat avec l'alias `MultiAgentGraph` importé depuis `core.graph` pour la compatibilité des tests et clients existants.
+5. Les routes `/packs/{pack_id}/...` résolvent via `PackRegistry.get(pack_id, version=...)` selon les en-têtes / paramètres (voir `api/main.py`).
 
 ---
 
 ## Contrat de BaseDomainPack
 
-`BaseDomainPack` est défini dans `platform/base_pack.py`. C'est la seule source de vérité pour le contrat que tout domain pack doit respecter.
+`BaseDomainPack` est défini dans `platform/base_pack.py`. Référence source : ce fichier dans le dépôt.
 
-### Attributs de classe (obligatoires)
+### Attributs de classe (obligatoires et optionnels)
 
-| Attribut | Type | Description |
-|---|---|---|
-| `pack_id` | `str` | Identifiant stable et unique. Utilisé comme clé dans `PackRegistry`. Doit être en snake_case. |
-| `name` | `str` | Nom lisible affiché dans les logs et les futures API de contrôle. |
-| `description` | `str` | Une phrase décrivant ce que fait le pack. |
+Les attributs `pack_id`, `name`, `description` sont **obligatoires** et validés par `PackRegistry.register()`.
 
-Ces attributs sont vérifiés par `PackRegistry.register()` : une `ValueError` est levée si `pack_id` est absent ou vide.
-
-### Signature du constructeur
-
-```python
-def __init__(
-    self,
-    run_id: str | None = None,
-    llm: Any | None = None,
-    checkpointer: Any | None = None,
-) -> None:
-```
-
-`BaseDomainPack.__init__` stocke `run_id`, `_llm`, et `_checkpointer` comme attributs d'instance. Les sous-classes appellent `super().__init__()` puis complètent leur propre initialisation.
+En complément, le code supporte : `version` (défaut `"1.0"`), `input_schema` / `output_schema` (modèles Pydantic), et le constructeur accepte **`budget_usd`**.
 
 ### Méthodes abstraites
 
-**`run(query: str) -> Any`**
-Exécution synchrone du pipeline. Retourne un résultat structuré (le type exact est propre à chaque pack). Lève `AgentValidationError` si `query` est vide, `AgentExecutionError` en cas d'échec interne.
-
-**`arun(query: str) -> Any`**
-Exécution asynchrone. Dans `ResearchAnalysisPack`, cette méthode délègue à `run()` via `loop.run_in_executor()` pour éviter de bloquer la boucle d'événements. D'autres packs peuvent implémenter un pipeline nativement async.
-
-**`stream_events(query: str) -> AsyncGenerator[dict, None]`**
-Générateur asynchrone qui yield des dicts au format `{"event": str, "data": dict}` au fil de l'exécution. Les types d'événements reconnus par l'API sont : `phase_started`, `phase_completed`, `token`, `pipeline_completed`. Un pack peut en définir d'autres, mais `pipeline_completed` est obligatoire et doit être le dernier événement émis.
-
-### Méthodes optionnelles
-
-**`close() -> None`**
-Hook de cycle de vie. Libère les ressources détenues par le pack (thread pool, connexions). Appelé automatiquement par `__exit__` quand le pack est utilisé comme context manager.
+`run`, `arun`, `stream_events` — inchangées par rapport au contrat initial (voir `platform/base_pack.py`).
 
 ---
 
 ## PackRegistry : interface et comportement
 
-`PackRegistry` est une classe sans état d'instance. Toutes les méthodes sont des `@classmethod`. Le registre est un dict de classe `_registry: dict[str, type[BaseDomainPack]]` partagé sur tout le processus.
+Implémentation réelle : `platform/registry.py`.
+
+Le registre interne est `_registry: dict[str, list[PackVersion]]` — une liste de versions par `pack_id`, **pas** un simple `dict[str, type]`.
 
 ### `register(pack_cls)`
 
-Enregistre `pack_cls` sous sa valeur de `pack_id`. Si `pack_cls` n'a pas d'attribut `pack_id` non vide, lève `ValueError`. L'enregistrement est idempotent : enregistrer deux fois le même pack remplace silencieusement l'entrée précédente.
+Valide `pack_id`, `name`, `description`. Construit un `PackVersion` avec `version = getattr(pack_cls, "version", "1.0")`. Remplace l'entrée si la même version existe (avec **warning** log) ; sinon **ajoute** une nouvelle version.
 
-### `get(pack_id)`
+### `get(pack_id, version=None)`
 
-Retourne `type[BaseDomainPack]` correspondant à `pack_id`. Si le `pack_id` n'est pas dans le registre, lève `KeyError` avec un message listant les packs disponibles, ce qui permet de diagnostiquer rapidement une faute de frappe dans `DEFAULT_PACK_ID`.
+Si `version` est fourni : retourne la classe de cette version exacte. Si `version` est `None` et une seule version existe : retourne cette classe. Si plusieurs versions et `version` est `None` : sélection **aléatoire pondérée** (`random.choices`) selon `weight`. Erreurs : `KeyError` si pack/version inconnus ou si tous les poids sont nuls.
 
-### `list_packs()`
+### `set_weights(pack_id, weights)`
 
-Retourne `list[str]` — la liste triée alphabétiquement des `pack_id` enregistrés. Utilisée pour les logs de démarrage et les futures API de contrôle.
+Met à jour les poids par chaîne de version.
 
-### `_reset()`
+### `list_packs()`, `get_schemas(pack_id)`, `list_packs_with_metadata()`
 
-Vide le registre. Réservé aux tests : à utiliser dans un fixture pytest avec `yield` pour garantir l'isolation entre tests.
+Découverte et schémas JSON — utilisés par l'API HTTP et les tests.
 
-```python
-@pytest.fixture(autouse=True)
-def clean_registry():
-    yield
-    PackRegistry._reset()
-```
+### `_get_versions(pack_id)`, `_reset()`
+
+`_get_versions` : liste des `PackVersion` — usage interne / introspection. `_reset()` : vide le registre (**tests uniquement**).
 
 ---
 
 ## Stratégie de backward-compat
 
-La contrainte principale est que tout code existant important `from core.graph import MultiAgentGraph` doit continuer de fonctionner sans modification.
-
-La solution retenue est un alias de module dans `core/graph.py` :
+`core/graph.py` expose :
 
 ```python
-# core/graph.py
-from domain_packs.research_analysis.pack import ResearchAnalysisPack
-
 MultiAgentGraph = ResearchAnalysisPack
 ```
 
-`ResearchAnalysisPack` expose exactement la même signature de constructeur et les mêmes méthodes publiques que l'ancien `MultiAgentGraph` : `run()`, `arun()`, `stream_events()`, `get_research_result()`, `close()`, `__enter__`, `__exit__`. Aucun consommateur ne voit de différence.
-
-`OrchestratorState` est également réexporté depuis `domain_packs/research_analysis/pack.py` pour les cas (rares) où des tests référencent ce type directement.
-
-L'API FastAPI (`api/main.py`) importe toujours `from core.graph import MultiAgentGraph` et n'a pas besoin d'être modifiée dans ce sprint. La migration vers `PackRegistry.get(settings.default_pack_id)` est prévue en sprint 2.
+`api/main.py` importe `MultiAgentGraph` depuis `core.graph` et résout en parallèle la classe par défaut via `PackRegistry.get(settings.default_pack_id)` pour aligner le comportement runtime sur `DEFAULT_PACK_ID` tout en préservant les patches de tests sur `api.main.MultiAgentGraph`.
 
 ---
 
-## Fichiers créés et modifiés
+## Fichiers créés et modifiés (état actuel du dépôt)
 
-### Créés
-
-| Fichier | Description |
-|---|---|
-| `platform/__init__.py` | Enregistre `ResearchAnalysisPack` au démarrage |
-| `platform/base_pack.py` | ABC `BaseDomainPack` |
-| `platform/registry.py` | `PackRegistry` |
-| `domain_packs/__init__.py` | Package marker |
-| `domain_packs/research_analysis/__init__.py` | Package marker |
-| `domain_packs/research_analysis/pack.py` | `ResearchAnalysisPack` (pipeline Research → Analysis) |
-
-### Modifiés
-
-| Fichier | Modification |
-|---|---|
-| `core/graph.py` | Ajout de l'alias `MultiAgentGraph = ResearchAnalysisPack` ; l'implémentation de la classe est supprimée et remplacée par l'import |
-| `core/config.py` | Ajout du champ `default_pack_id: str = Field(default="research_analysis", validation_alias="DEFAULT_PACK_ID")` |
-
-### Non modifiés
-
-`api/main.py`, `agents/`, `tests/`, `examples/`, `infra/`, `pyproject.toml`, tous les fichiers de configuration.
+Les fichiers listés dans la version initiale de ce document ont été étendus : notamment **`api/main.py`**, **`core/config.py`**, **`tests/`**, **`infra/Dockerfile`**, et les dossiers **`platform/`**, **`domain_packs/`** — voir l'arbre du dépôt pour la liste exacte.
 
 ---
 
-## In scope / Out of scope
+## In scope / Out of scope (révisé)
 
-### In scope
+### In scope (livré — périmètre minimal + extensions documentées plus haut)
 
-- Définition du contrat `BaseDomainPack` (ABC, attributs de classe, méthodes abstraites, lifecycle).
-- Implémentation de `PackRegistry` avec `register`, `get`, `list_packs`, `_reset`.
-- Migration de `MultiAgentGraph` vers `ResearchAnalysisPack` héritant de `BaseDomainPack`.
-- Alias de rétrocompatibilité dans `core/graph.py`.
-- Ajout de `DEFAULT_PACK_ID` dans `core/config.py`.
-- Enregistrement de `ResearchAnalysisPack` dans `platform/__init__.py`.
+- Contrat `BaseDomainPack` et premier pack `ResearchAnalysisPack`.
+- `PackRegistry` avec enregistrement explicite, résolution par `pack_id`, **versions multiples**, **poids**, **schémas**, méthodes de listing / métadonnées (`registry.py`).
+- Alias `MultiAgentGraph` dans `core/graph.py`.
+- `DEFAULT_PACK_ID` et intégration API (lifespan, routes pack et legacy).
+- Tests de contrat et tests API associés.
 
-### Out of scope
+### Out of scope (non implémenté)
 
-- Chargement dynamique de packs via entry points ou filesystem.
-- API REST pour lister ou switcher les packs (`GET /packs`, `POST /packs/activate`).
-- Connecteurs permettant à un pack de consommer la sortie d'un autre.
-- Versionnement des packs (`pack_id@v2`).
-- Migration de `api/main.py` pour utiliser `PackRegistry` directement (prévu sprint 2).
-- Documentation des packs dans l'OpenAPI schema.
+- Auto-discovery / chargement dynamique sans modifier `platform/__init__.py`.
+- Connecteurs inter-packs dédiés.
+- Hot reload du code pack sans redémarrage du processus.
 
 ---
 
 ## Risques et mitigations
 
-| Risque | Probabilité | Impact | Mitigation |
-|---|---|---|---|
-| `platform/__init__.py` importe `domain_packs` qui importe `core` — risque de circular import | Moyenne | Bloquant | L'import de `platform` dans `api/main.py` se fait après que `core` est entièrement chargé. Les imports dans `domain_packs/research_analysis/pack.py` suivent le même ordre que l'ancien `core/graph.py` ; aucun cycle nouveau n'est introduit. |
-| Un développeur enregistre deux packs avec le même `pack_id` | Faible | Silencieux | L'enregistrement est idempotent (le second écrase le premier). Ajouter un warning de log dans `register()` si la clé existe déjà est prévu pour rendre le comportement visible. |
-| `PackRegistry._reset()` oublié dans un test, pollution de l'état global | Moyenne | Test flaky | Documenter l'usage de `_reset()` dans le guide de contribution. Envisager un fixture `autouse=True` dans `conftest.py` pour les tests qui touchent le registre. |
-| `DEFAULT_PACK_ID` configuré sur un pack non enregistré en production | Faible | Bloquant au démarrage | `PackRegistry.get()` lève `KeyError` avec la liste des packs disponibles. Le lifespan FastAPI propagera l'exception et le processus refusera de démarrer, ce qui est le comportement souhaité (fail fast). |
+| Risque | Mitigation |
+|--------|------------|
+| Circular imports | Ordre d'import documenté dans `api/main.py` et `platform/__init__.py` ; pas de cycle nouveau par rapport à l'ancien `core/graph.py`. |
+| `DEFAULT_PACK_ID` invalide | Échec au démarrage (`KeyError` / `RuntimeError` dans le lifespan). |
+| Plusieurs versions, poids à zéro | `get()` lève `KeyError` si aucun poids positif. |
