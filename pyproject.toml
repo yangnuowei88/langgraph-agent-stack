@@ -60,7 +60,7 @@ observability = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["agents", "core", "api", "connectors"]
+packages = ["agents", "core", "api", "connectors", "control_plane"]
 
 [dependency-groups]
 dev = [
