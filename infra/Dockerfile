@@ -63,8 +63,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     VIRTUAL_ENV=/app/.venv \
     PATH="/app/.venv/bin:$PATH"
 
-# Install curl for the HEALTHCHECK only; keep the layer tiny
-RUN apt-get update && apt-get install -y --no-install-recommends curl \
+# Install curl for HEALTHCHECK; upgrade base OS packages for Trivy/CVE fixes
+RUN apt-get update \
+    && apt-get upgrade -y --no-install-recommends \
+    && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Create a non-root user and group
