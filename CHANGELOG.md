@@ -7,24 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-- **Second domain pack** `research_only` (`ResearchOnlyPack`) with typed `/packs/research_only/run` routes.
-- **Retrieval connectors** — `example_memory`, `http` (`CONNECTOR_HTTP_URL`), and `rag` (`RAG_ENABLED`); API injection via `CONNECTOR_ENABLED` into `ResearchAnalysisPack`.
-- **Control plane enforcement** — `PolicyRegistry`, `control_plane/enforce.py` (per-pack query limits, budget ceiling, stream timeout).
-- **Sticky pack versions** on Redis and Postgres run-history backends (`get_pack_version_for_session`).
-
-## [0.5.0] - 2026-05-04
+## [0.5.0] - 2026-05-19
 
 ### Added
+- **Platform kernel** — `platform/` (`BaseDomainPack`, `PackRegistry`), `domain_packs/research_analysis/` (`ResearchAnalysisPack`); `core/graph.py` shim (`MultiAgentGraph` alias); `DEFAULT_PACK_ID`; contract and API tests.
 - **Per-run cost attribution** (`core/cost.py`): `CostTracker` callback handler accumulates token costs per model run using a configurable pricing table; `BudgetExceededError` and `AgentBudgetExceededError` raised when `budget_usd` is exceeded; `pack_run_cost_usd_total` Prometheus counter emitted per run. `cost_usd` exposed on agent, pack, and API responses; HTTP 402 returned when budget is exceeded. New settings: `PACK_DEFAULT_BUDGET_USD`, `LLM_COST_TABLE_PATH`.
 - **Typed pack schemas + auto API wiring** (`platform/base_pack.py`, `platform/registry.py`): `input_schema`/`output_schema`/`version` ClassVars on `BaseDomainPack`; `get_schemas()` and `list_packs_with_metadata()` on `PackRegistry`; dynamic `_build_pack_router()` generates per-pack endpoints at startup. New endpoints: `GET /packs`, `GET /packs/{pack_id}/versions`, `PATCH /packs/{pack_id}/versions/{version}/weight`. `ResearchAnalysisInput`/`ResearchAnalysisOutput` Pydantic schemas in `domain_packs/research_analysis/schemas.py`.
 - **Pack versioning + traffic split** (`platform/registry.py`): `PackVersion` dataclass; `_registry` refactored to `dict[str, list[PackVersion]]`; `set_weights()` for traffic-split configuration. `X-Pack-Version` request header pins to a specific version; `X-Pack-Version-Used` response header reports the actual version used. Sticky session support via `get_pack_version_for_session()` (SQLite backend). `save_run` stores `pack_version` metadata.
+- **Second domain pack** `research_only` (`ResearchOnlyPack`) with typed `/packs/research_only/run` routes.
+- **Retrieval connectors** — `example_memory`, `http` (`CONNECTOR_HTTP_URL`), and `rag` (`RAG_ENABLED`); API injection via `CONNECTOR_ENABLED` into `ResearchAnalysisPack`; optional `connector=` on the pack constructor.
+- **Control plane enforcement** — `PolicyRegistry`, `control_plane/enforce.py` (per-pack query limits, budget ceiling, stream timeout); foundation types in `connectors/` and `control_plane/`.
+- **Sticky pack versions** on Redis and Postgres run-history backends (`get_pack_version_for_session`).
 - `examples/custom_pack/`: `SummariserPack` reference implementation showing how to author a third-party domain pack.
 
 ### Changed
 - `agents/base_agent.py`: `budget_usd` constructor parameter added; `cost_usd` property reads from attached `CostTracker`.
-- `domain_packs/research_analysis/pack.py`: cost propagation through the pipeline; `cost_usd` property on the pack instance.
+- `domain_packs/research_analysis/pack.py`: cost propagation through the pipeline; `cost_usd` property on the pack instance; optional connector merge in the research phase.
 - `api/models.py`: `cost_usd` field added to `RunResponse` and `ResearchResponse`.
+- `infra/Dockerfile`: copies `platform/`, `domain_packs/`, `connectors/`, `control_plane/` into the runtime image.
 
 ## [0.4.0] - 2026-04-08
 
