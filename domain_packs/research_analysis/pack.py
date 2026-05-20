@@ -31,6 +31,7 @@ from agents.base_agent import (
     AgentValidationError,
 )
 from agents.researcher import ResearchAgent, ResearchResult
+from connectors.base import BaseConnector, ConnectorRequest, ConnectorResult
 from core.config import get_settings
 from core.memory import create_checkpointer
 from core.observability import trace_span
@@ -101,6 +102,7 @@ class ResearchAnalysisPack(BaseDomainPack):
         llm: Any | None = None,
         checkpointer: Any | None = None,
         budget_usd: float | None = None,
+        connector: BaseConnector | None = None,
     ) -> None:
         """Initialise the Research + Analysis pipeline.
 
@@ -113,12 +115,15 @@ class ResearchAnalysisPack(BaseDomainPack):
                           Each agent in the pipeline enforces this limit independently —
                           the total pipeline cost may reach ``budget_usd * number_of_agents``.
                           Set to ``None`` to disable budget enforcement (default).
+            connector:    Optional retrieval adapter; when set, records from
+                          ``connector.fetch()`` are merged into the research phase output.
         """
         super().__init__(
             run_id=run_id, llm=llm, checkpointer=checkpointer, budget_usd=budget_usd
         )
         self.run_id = run_id or str(uuid.uuid4())
         self._checkpointer = checkpointer or create_checkpointer(get_settings())
+        self._connector = connector
         self._executor: ThreadPoolExecutor | None = None
         self._executor_lock = threading.Lock()
         self._research_agent: ResearchAgent | None = None
@@ -155,6 +160,62 @@ class ResearchAnalysisPack(BaseDomainPack):
         return graph.compile(checkpointer=self._checkpointer)
 
     # ------------------------------------------------------------------
+    # Optional connector retrieval
+    # ------------------------------------------------------------------
+
+    def _fetch_connector_result(self, query: str) -> ConnectorResult:
+        """Run the optional connector (sync graph node — uses asyncio.run when idle)."""
+        if self._connector is None:
+            return ConnectorResult()
+
+        request = ConnectorRequest(query=query)
+
+        async def _fetch() -> ConnectorResult:
+            return await self._connector.fetch(request)  # type: ignore[union-attr]
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return asyncio.run(_fetch())
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(asyncio.run, _fetch())
+            return future.result()
+
+    def _merge_connector_into_result(
+        self, result: ResearchResult, connector_result: ConnectorResult
+    ) -> ResearchResult:
+        """Append connector snippets to findings and record provenance in metadata."""
+        if not connector_result.records:
+            return result
+
+        extra_findings: list[str] = []
+        extra_sources: list[str] = []
+        for record in connector_result.records:
+            snippet = record.get("snippet") or record.get("text")
+            if snippet:
+                extra_findings.append(str(snippet))
+            source = record.get("source")
+            if source:
+                extra_sources.append(str(source))
+
+        metadata = dict(result.metadata)
+        metadata["connector"] = {
+            "connector_id": getattr(self._connector, "connector_id", ""),
+            "record_count": len(connector_result.records),
+            "fetch_metadata": connector_result.metadata,
+        }
+
+        return ResearchResult(
+            query=result.query,
+            findings=[*result.findings, *extra_findings],
+            summary=result.summary,
+            sources=[*result.sources, *extra_sources],
+            confidence=result.confidence,
+            metadata=metadata,
+        )
+
+    # ------------------------------------------------------------------
     # Graph nodes
     # ------------------------------------------------------------------
 
@@ -185,6 +246,9 @@ class ResearchAnalysisPack(BaseDomainPack):
                         budget_usd=self._budget_usd,
                     )
                 result: ResearchResult = self._research_agent.run_structured(query)
+                if self._connector is not None:
+                    connector_result = self._fetch_connector_result(query)
+                    result = self._merge_connector_into_result(result, connector_result)
                 logger.info(
                     "Pipeline: research phase complete",
                     extra={

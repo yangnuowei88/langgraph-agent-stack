@@ -168,6 +168,12 @@ Les fichiers listés dans la version initiale de ce document ont été étendus 
 - Connecteurs inter-packs dédiés.
 - Hot reload du code pack sans redémarrage du processus.
 
+### Sprint 2 (livré)
+
+- **`ResearchOnlyPack`** (`pack_id=research_only`) — second pack enregistré dans `platform/__init__.py`.
+- **Connecteur optionnel** — `ResearchAnalysisPack(connector=...)` ; API via `CONNECTOR_ENABLED` / `CONNECTOR_ID` et `core/connectors.py` (`example_memory`).
+- Tests : `tests/test_research_only_pack.py`, `tests/test_connector_pack.py`, `tests/test_core_connectors.py`, `tests/test_api_connector.py`.
+
 ---
 
 ## Risques et mitigations

@@ -171,6 +171,12 @@ Branch names must be lowercase with hyphens — no underscores, no uppercase.
 4. Expose standalone behavior via a new endpoint in `api/main.py` (see `/research`) or rely on registry-driven pack routes when registered.
 5. Add tests under `tests/` (unit tests for the agent; pack contract tests if you extend `PackRegistry`).
 
+See `domain_packs/research_only/` for a minimal second-pack example already registered in `platform/__init__.py`.
+
+### Optional retrieval connector
+
+When `CONNECTOR_ENABLED=true`, the API injects the connector resolved from `CONNECTOR_ID` into **`research_analysis`** pack instances only. To test locally without the API, pass `connector=...` to `ResearchAnalysisPack(...)`. Built-in ids are defined in `core/connectors.py`.
+
 ## Reporting Issues
 
 - Check existing issues before opening a new one.

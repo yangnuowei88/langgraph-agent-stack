@@ -1,13 +1,16 @@
 """
 api/main.py — Production-ready FastAPI application for the LangGraph agent stack.
 
-Exposes three functional endpoints over the multi-agent pipeline:
+Primary HTTP surface:
 
-* ``POST /run``        — Full Research + Analysis pipeline via ``MultiAgentGraph``.
-* ``POST /run/stream`` — Same pipeline streamed as Server-Sent Events.
-* ``POST /research``   — Research-only pipeline via ``ResearchAgent``.
-* ``GET  /health``     — Lightweight health/liveness probe.
-* ``GET  /``           — Redirect to the auto-generated ``/docs`` UI.
+* ``POST /run`` / ``POST /run/stream`` — Legacy routes; class from ``DEFAULT_PACK_ID``
+  via ``_legacy_pipeline_pack_cls()`` (registry + optional test patch on
+  ``MultiAgentGraph``).
+* ``POST /packs/{pack_id}/run`` (+ stream) — Typed routes built from ``PackRegistry``
+  at lifespan (e.g. ``research_analysis``, ``research_only``).
+* ``GET /packs`` — Pack discovery (schemas, metadata).
+* ``POST /research`` — Standalone ``ResearchAgent`` (not a domain pack).
+* ``GET /health`` / ``GET /ready`` — Probes.
 
 Architecture notes
 ------------------
@@ -19,9 +22,9 @@ Architecture notes
 * CORS origins are driven by ``settings`` — never hard-coded.
 * Secrets are loaded exclusively from the environment / ``.env`` file via the
   ``Settings`` pydantic-settings model in ``core.config``.
-* Legacy ``POST /run`` and ``POST /run/stream`` resolve the pipeline class via
-  ``_legacy_pipeline_pack_cls()`` (registry default ``_active_pack_cls`` plus
-  ``patch("api.main.MultiAgentGraph")`` support for tests).
+* ``CONNECTOR_ENABLED`` + ``CONNECTOR_ID``: lifespan resolves a shared connector
+  (``core/connectors.py``) and injects it into ``ResearchAnalysisPack`` via
+  ``_pack_runtime_kwargs()``; other packs ignore it.
 """
 
 from __future__ import annotations
@@ -72,6 +75,7 @@ from api.models import (
     RunResponse,
 )
 from core.config import Settings, get_settings
+from core.connectors import resolve_connector
 from core.graph import MultiAgentGraph
 from core.memory import cleanup_checkpointer, create_run_history
 
@@ -112,6 +116,7 @@ _shared_llm: BaseChatModel | None = None
 _shared_checkpointer: Any | None = None
 _shared_memory: Any = None
 _active_pack_cls: Any = None  # resolved from PackRegistry at startup
+_shared_connector: Any = None  # optional BaseConnector when CONNECTOR_ENABLED
 
 # Security primitives — 60 requests per minute per IP is a conservative
 # default suited for an LLM pipeline where each request may take several
@@ -206,7 +211,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         * Gracefully shuts down the thread pool, waiting for in-flight tasks.
     """
     global _start_time, _executor, _shared_llm, _shared_checkpointer, _shared_memory
-    global _rate_limiter, _active_pack_cls
+    global _rate_limiter, _active_pack_cls, _shared_connector
 
     _start_time = time.monotonic()
 
@@ -248,6 +253,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             f"DEFAULT_PACK_ID '{_settings.default_pack_id}' is not registered. "
             "Check platform/__init__.py."
         ) from exc
+
+    _shared_connector = resolve_connector(_settings)
+    if _shared_connector is not None:
+        logger.info(
+            "Retrieval connector enabled",
+            extra={"connector_id": _settings.connector_id},
+        )
 
     # Wire per-pack routers from registry — guard against duplicate registration
     # which can occur in tests where the same module-level ``app`` object is
@@ -333,6 +345,15 @@ def get_shared_checkpointer() -> Any | None:
 
 def get_shared_memory() -> Any:
     return _shared_memory
+
+
+def _pack_runtime_kwargs(pack_cls: type) -> dict[str, Any]:
+    """Extra constructor kwargs for packs that support an optional connector."""
+    if _shared_connector is None:
+        return {}
+    if getattr(pack_cls, "pack_id", None) != "research_analysis":
+        return {}
+    return {"connector": _shared_connector}
 
 
 def _legacy_pipeline_pack_cls() -> Any:
@@ -506,6 +527,7 @@ def _build_pack_router(
                 run_id=run_id,
                 llm=get_shared_llm(),
                 checkpointer=get_shared_checkpointer(),
+                **_pack_runtime_kwargs(pack_cls_to_use),
             ) as pipeline:
                 result = pipeline.run(query)
                 cost_usd = getattr(pipeline, "cost_usd", None)
@@ -526,6 +548,8 @@ def _build_pack_router(
 
                 if hasattr(output_model, "from_analysis_report"):
                     return output_model.from_analysis_report(result, cost_usd=cost_usd)
+                if hasattr(output_model, "from_research_result"):
+                    return output_model.from_research_result(result, cost_usd=cost_usd)
                 return result
 
         try:
@@ -595,6 +619,7 @@ def _build_pack_router(
                 run_id=run_id,
                 llm=get_shared_llm(),
                 checkpointer=get_shared_checkpointer(),
+                **_pack_runtime_kwargs(pack_cls_to_use),
             )
             try:
                 _events = pack.stream_events(query)
@@ -1127,6 +1152,7 @@ async def run_pipeline(
             run_id=run_id,
             llm=_shared_llm,
             checkpointer=_shared_checkpointer,
+            **_pack_runtime_kwargs(pack_cls),
         ) as pipeline:
             report = pipeline.run(query)
 
@@ -1246,7 +1272,12 @@ async def _stream_pipeline(
         checkpointer = get_shared_checkpointer()
 
         pack_cls = _legacy_pipeline_pack_cls()
-        pipeline = pack_cls(run_id=run_id, llm=llm, checkpointer=checkpointer)
+        pipeline = pack_cls(
+            run_id=run_id,
+            llm=llm,
+            checkpointer=checkpointer,
+            **_pack_runtime_kwargs(pack_cls),
+        )
         report = None
 
         try:

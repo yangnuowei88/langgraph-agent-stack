@@ -157,6 +157,19 @@ class Settings(BaseSettings):
         validation_alias="RAG_ENABLED",
         description="Enable RAG (Retrieval-Augmented Generation) via a vector store.",
     )
+    connector_enabled: bool = Field(
+        default=False,
+        validation_alias="CONNECTOR_ENABLED",
+        description=(
+            "When true, inject a retrieval connector into ResearchAnalysisPack "
+            "runs (legacy /run and /packs/research_analysis/*)."
+        ),
+    )
+    connector_id: str = Field(
+        default="example_memory",
+        validation_alias="CONNECTOR_ID",
+        description="Built-in connector id when CONNECTOR_ENABLED=true (see core/connectors.py).",
+    )
 
     # --- Logging ---
     log_level: LogLevel = Field(
@@ -272,6 +285,14 @@ class Settings(BaseSettings):
     def _validate_backend_urls(self) -> Settings:
         if self.memory_backend.value == "postgres" and not self.postgres_url:
             raise ValueError("POSTGRES_URL must be set when MEMORY_BACKEND=postgres")
+        if self.connector_enabled:
+            from core.connectors import list_connector_ids
+
+            if self.connector_id not in list_connector_ids():
+                raise ValueError(
+                    f"CONNECTOR_ID {self.connector_id!r} is not supported. "
+                    f"Use one of: {', '.join(list_connector_ids())}"
+                )
         return self
 
     @field_validator("redis_url")

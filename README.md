@@ -59,6 +59,7 @@ User Query
 | `ResearchAgent` | `agents/researcher.py` | Expands queries into sub-queries, retrieves information snippets, validates quality |
 | `AnalystAgent` | `agents/analyst.py` | Consumes research findings, extracts insights, identifies patterns, produces a structured report |
 | `ResearchAnalysisPack` | `domain_packs/research_analysis/pack.py` | Domain pack that owns the LangGraph graph (Research → Analysis); registered in `PackRegistry` |
+| `ResearchOnlyPack` | `domain_packs/research_only/pack.py` | Second built-in pack — research phase only (`POST /packs/research_only/run`) |
 | `MultiAgentGraph` | `core/graph.py` | Backward-compat alias for `ResearchAnalysisPack` (shim only — new orchestration belongs in a domain pack) |
 | `PackRegistry` | `platform/registry.py` | Explicit registration of domain packs and versions (`platform/__init__.py` registers built-ins at import) |
 | `ConversationMemory` | `core/memory.py` | Pluggable checkpoint backend (SQLite, Redis, or PostgreSQL) |
@@ -72,6 +73,11 @@ User Query
 - **Pack versioning + traffic split** — multiple versions of a pack can be registered simultaneously via the `PackVersion` dataclass. `set_weights()` controls the traffic split. `X-Pack-Version` request header pins a call to a specific version; `X-Pack-Version-Used` response header confirms which version ran.
 - **Sticky sessions** — on the SQLite backend, the router remembers which pack version was used for a given session and reuses it automatically (override with `X-Pack-Version` header).
 - **New REST endpoints** — `GET /packs`, `GET /packs/{pack_id}/versions`, `PATCH /packs/{pack_id}/versions/{version}/weight`.
+
+**Platform kernel (Sprint 2)**
+
+- **Second domain pack** — `research_only` (`ResearchOnlyPack`) registered alongside `research_analysis`; use `POST /packs/research_only/run` for research-only output.
+- **Optional retrieval connector** — `CONNECTOR_ENABLED` + `CONNECTOR_ID` inject a built-in connector into `ResearchAnalysisPack` on `/run` and `/packs/research_analysis/*` (default id: `example_memory`; query containing `demo` returns canned snippets).
 
 ## Quick Start
 
@@ -510,9 +516,12 @@ All configuration is loaded from environment variables. Copy `.env.example` to `
 | `MEMORY_BACKEND` | `sqlite` | Checkpoint backend: `sqlite`, `redis`, `postgres` |
 | `ENVIRONMENT` | `development` | Deployment label: `development`, `staging`, `production` |
 | `LOG_LEVEL` | `INFO` | Logging verbosity: `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` |
+| `DEFAULT_PACK_ID` | `research_analysis` | Pack for legacy `POST /run` / `/run/stream` (must be registered) |
 | `API_HOST` | `0.0.0.0` | Host the FastAPI server binds to |
 | `API_PORT` | `8000` | TCP port the FastAPI server listens on |
 | `API_KEY` | — | Bearer token for API auth. Leave unset to disable auth. |
+| `CONNECTOR_ENABLED` | `false` | Inject retrieval connector into `research_analysis` runs |
+| `CONNECTOR_ID` | `example_memory` | Built-in connector when enabled (see `core/connectors.py`) |
 
 ### LLM providers
 
@@ -542,7 +551,7 @@ All configuration is loaded from environment variables. Copy `.env.example` to `
 | `SQLITE_PATH` | `./data/agent_memory.db` | SQLite database file path |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis connection URL (required when `MEMORY_BACKEND=redis`) |
 | `POSTGRES_URL` | — | PostgreSQL DSN (required when `MEMORY_BACKEND=postgres`) |
-| `RAG_ENABLED` | `false` | Enable vector store infrastructure (not yet wired to agents — planned for v0.4.0) |
+| `RAG_ENABLED` | `false` | Provision vector store infra only — not wired into pack/agent pipelines yet |
 
 ### Agent behaviour
 
@@ -690,9 +699,9 @@ langgraph-agent-stack/
 │   ├── base_pack.py        # BaseDomainPack contract; PackRegistry in registry.py
 │   └── __init__.py         # Registers built-in packs at import time
 ├── domain_packs/
-│   └── research_analysis/
-│       └── pack.py         # ResearchAnalysisPack — default Research → Analysis graph
-├── connectors/             # Optional retrieval adapters (foundation)
+│   ├── research_analysis/  # Default pack: Research → Analysis
+│   └── research_only/      # Second pack: ResearchAgent only
+├── connectors/             # BaseConnector contract + example_memory stub
 ├── control_plane/          # Policy types (foundation)
 ├── agents/
 │   ├── base_agent.py       # Abstract BaseAgent, error types, retry logic
@@ -701,6 +710,7 @@ langgraph-agent-stack/
 │   └── analyst.py          # AnalystAgent — insight extraction, pattern detection, reporting
 ├── core/
 │   ├── config.py           # Pydantic-settings Settings model; use get_settings() not Settings()
+│   ├── connectors.py       # Connector factory for CONNECTOR_ENABLED
 │   ├── graph.py            # Shim — MultiAgentGraph = ResearchAnalysisPack (compat imports)
 │   ├── llm.py              # get_llm() — provider-agnostic LLM instantiation
 │   ├── memory.py           # ConversationMemory — SQLite / Redis / PostgreSQL checkpointing
@@ -759,11 +769,15 @@ No code changes required — `core/llm.py` handles instantiation.
 1. Set `MEMORY_BACKEND=postgres` and `POSTGRES_URL=postgresql+psycopg://user:pass@host:5432/dbname`.
 2. Install the PostgreSQL extras: `uv sync --extra postgres`.
 
+### Enable optional retrieval connector
+
+1. Set `CONNECTOR_ENABLED=true` and `CONNECTOR_ID=example_memory` in `.env`.
+2. Restart the API. Research runs on `research_analysis` merge connector snippets when the query matches the stub (e.g. include `demo` for `example_memory`).
+3. Add new connector classes in `core/connectors.py` — no global registry beyond built-in ids.
+
 ### Enable RAG (experimental)
 
-> **Note:** Setting `RAG_ENABLED=true` currently provisions the vector store
-> infrastructure (ChromaDB or PGVector) but does **not** wire it into agent
-> pipelines by default. Wiring RAG into a pack or agent is a separate integration step.
+> **Note:** `RAG_ENABLED=true` provisions vector store infrastructure (ChromaDB or PGVector) but does **not** wire it into agents or domain packs yet.
 
 1. Set `RAG_ENABLED=true` in your environment.
 2. Install the RAG extras: `uv sync --extra rag`.

@@ -20,6 +20,7 @@ from agents.base_agent import (
     AgentTimeoutError,
     AgentValidationError,
 )
+from agents.models import ResearchResult
 
 # ---------------------------------------------------------------------------
 # GET /health
@@ -1022,6 +1023,7 @@ def test_list_packs_returns_registered_packs(test_client: TestClient) -> None:
 
     pack_ids = [p["pack_id"] for p in packs]
     assert "research_analysis" in pack_ids
+    assert "research_only" in pack_ids
 
     ra_pack = next(p for p in packs if p["pack_id"] == "research_analysis")
     assert "name" in ra_pack
@@ -1080,6 +1082,32 @@ def test_pack_run_rejects_empty_query(test_client: TestClient) -> None:
     )
 
     assert response.status_code == 422
+
+
+def test_pack_run_endpoint_exists_for_research_only(
+    test_client: TestClient,
+    mock_research_result: ResearchResult,
+) -> None:
+    """POST /packs/research_only/run must return 200 with research output fields."""
+    from domain_packs.research_only.pack import ResearchOnlyPack
+
+    def _noop_init(self, **kwargs):  # type: ignore[override]
+        pass
+
+    with (
+        patch.object(ResearchOnlyPack, "__init__", _noop_init),
+        patch.object(ResearchOnlyPack, "run", return_value=mock_research_result),
+        patch.object(ResearchOnlyPack, "close", return_value=None),
+    ):
+        response = test_client.post(
+            "/packs/research_only/run",
+            json={"query": "What is a microservice?"},
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "summary" in body
+    assert "findings" in body
 
 
 # ---------------------------------------------------------------------------

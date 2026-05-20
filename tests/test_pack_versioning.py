@@ -96,12 +96,14 @@ def clean_registry():
     state.
     """
     from domain_packs.research_analysis.pack import ResearchAnalysisPack
+    from domain_packs.research_only.pack import ResearchOnlyPack
 
     PackRegistry._reset()
     yield
-    # Restore the registry to its baseline state (just the built-in pack).
+    # Restore the registry to its baseline state (built-in packs).
     PackRegistry._reset()
     PackRegistry.register(ResearchAnalysisPack)
+    PackRegistry.register(ResearchOnlyPack)
 
 
 # ---------------------------------------------------------------------------

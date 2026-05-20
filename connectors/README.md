@@ -22,6 +22,21 @@ This package defines a **small, explicit contract** for code that pulls data fro
 
 Keep imports **local** to the pack module to avoid loading unused backends at API startup.
 
+### Wired in this repository
+
+`ResearchAnalysisPack` (`domain_packs/research_analysis/pack.py`) accepts an optional `connector=` constructor argument. During the research graph node, it calls `fetch()` and merges records into `ResearchResult.findings` and `metadata["connector"]`.
+
+**API (production):** set in `.env`:
+
+```env
+CONNECTOR_ENABLED=true
+CONNECTOR_ID=example_memory
+```
+
+The FastAPI lifespan resolves the connector via `core/connectors.py` and passes it into every `research_analysis` pack instance (`POST /run`, `/packs/research_analysis/run`, and stream routes). Other packs (e.g. `research_only`) are unaffected.
+
+See `connectors/examples/example_connector.py`, `tests/test_connector_pack.py`, and `tests/test_api_connector.py`.
+
 ## Layout
 
 | Path | Role |

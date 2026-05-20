@@ -18,12 +18,14 @@ from platform.registry import PackRegistry
 import pytest
 from pydantic import ValidationError
 
-from agents.models import AnalysisReport
+from agents.models import AnalysisReport, ResearchResult
 from domain_packs.research_analysis.pack import ResearchAnalysisPack
 from domain_packs.research_analysis.schemas import (
     ResearchAnalysisInput,
     ResearchAnalysisOutput,
 )
+from domain_packs.research_only.pack import ResearchOnlyPack
+from domain_packs.research_only.schemas import ResearchOnlyInput, ResearchOnlyOutput
 
 # ---------------------------------------------------------------------------
 # BaseDomainPack default schema tests
@@ -206,6 +208,16 @@ def test_research_analysis_pack_is_registered() -> None:
     assert "research_analysis" in PackRegistry.list_packs()
 
 
+def test_research_only_pack_is_registered() -> None:
+    """``research_only`` must appear in ``list_packs()``."""
+    assert "research_only" in PackRegistry.list_packs()
+
+
+def test_registry_get_research_only_returns_correct_class() -> None:
+    """``get('research_only')`` must return ``ResearchOnlyPack``."""
+    assert PackRegistry.get("research_only") is ResearchOnlyPack
+
+
 def test_registry_get_returns_correct_class() -> None:
     """``get('research_analysis')`` must return ``ResearchAnalysisPack``."""
     resolved = PackRegistry.get("research_analysis")
@@ -290,3 +302,24 @@ def test_default_pack_id_resolves_to_registered_pack() -> None:
     pack_id = settings.default_pack_id
     resolved = PackRegistry.get(pack_id)
     assert issubclass(resolved, BaseDomainPack)
+
+
+def test_research_only_pack_schemas() -> None:
+    """ResearchOnlyPack must declare typed input/output schemas."""
+    assert ResearchOnlyPack.input_schema is ResearchOnlyInput
+    assert ResearchOnlyPack.output_schema is ResearchOnlyOutput
+
+
+def test_research_only_output_from_research_result() -> None:
+    """from_research_result must map ResearchResult fields."""
+    result = ResearchResult(
+        query="demo topic",
+        findings=["a"],
+        summary="s",
+        sources=["https://example.com"],
+        confidence=0.9,
+    )
+    output = ResearchOnlyOutput.from_research_result(result, cost_usd=0.01)
+    assert output.query == "demo topic"
+    assert output.findings == ["a"]
+    assert output.cost_usd == 0.01

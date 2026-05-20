@@ -66,7 +66,16 @@ Internally, each `pack_id` maps to a **list of `PackVersion`** entries (`datacla
 
 ### Domain Packs
 
-A domain pack is a self-contained implementation of `BaseDomainPack`. It owns its LangGraph graph, its agents, and its wire/schema surface. The first pack, `ResearchAnalysisPack`, implements the Research → Analysis pipeline that was previously in `core/graph.py`.
+A domain pack is a self-contained implementation of `BaseDomainPack`. It owns its LangGraph graph, its agents, and its wire/schema surface.
+
+Built-in packs registered in `platform/__init__.py`:
+
+| `pack_id` | Class | Role |
+|-----------|--------|------|
+| `research_analysis` | `ResearchAnalysisPack` | Research → Analysis (default; former `MultiAgentGraph`) |
+| `research_only` | `ResearchOnlyPack` | Research phase only — second pack illustrating multi-pack registration |
+
+`ResearchAnalysisPack` optionally accepts a `connector=` (`BaseConnector`) to merge external retrieval snippets into the research phase. Enable via `CONNECTOR_ENABLED=true` and `CONNECTOR_ID` (default `example_memory`) — the API injects the connector at startup; see `connectors/README.md` and `core/connectors.py`.
 
 ## How to Add a New Domain Pack
 
@@ -119,6 +128,8 @@ MultiAgentGraph = ResearchAnalysisPack
 Existing imports `from core.graph import MultiAgentGraph` remain valid. The FastAPI app also imports `MultiAgentGraph` for **test patching** and combines it with **`PackRegistry.get(settings.default_pack_id)`** (`_active_pack_cls`) when executing `/run` and `/run/stream`, so the default pipeline class matches the configured pack while mocks can still target `api.main.MultiAgentGraph`.
 
 Per-pack routes under `/packs/{pack_id}/...` use the registry and pack schemas directly.
+
+**Legacy vs default pack:** `DEFAULT_PACK_ID` selects `_active_pack_cls` at startup. `MultiAgentGraph` in `core/graph.py` always aliases `ResearchAnalysisPack`. If you point `DEFAULT_PACK_ID` at another pack, legacy `/run` uses `_legacy_pipeline_pack_cls()` (registry class unless tests patch `api.main.MultiAgentGraph`). Prefer `/packs/{pack_id}/run` when the target pack is not `research_analysis`.
 
 ## What Is Not Here Yet (later work)
 
