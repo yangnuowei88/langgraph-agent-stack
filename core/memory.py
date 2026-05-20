@@ -778,6 +778,9 @@ class RedisRunHistory:
     def _session_key(self, session_id: str) -> str:
         return f"{self._prefix}:session:{session_id}"
 
+    def _session_pack_key(self, session_id: str, pack_id: str) -> str:
+        return f"{self._prefix}:session:{session_id}:pack:{pack_id}"
+
     def save_run(
         self,
         run_id: str,
@@ -804,8 +807,11 @@ class RedisRunHistory:
         score = datetime.fromisoformat(created_at).timestamp()
         pipe.zadd(self._timeline_key(), {run_id: score})
         session_id = meta.get("session_id")
+        pack_id = meta.get("pack_id")
         if session_id:
             pipe.zadd(self._session_key(session_id), {run_id: score})
+        if session_id and pack_id:
+            pipe.zadd(self._session_pack_key(session_id, str(pack_id)), {run_id: score})
         pipe.execute()
 
     def get_run(self, run_id: str) -> dict[str, Any] | None:
@@ -840,8 +846,25 @@ class RedisRunHistory:
         return [r for rid in run_ids if (r := self.get_run(rid)) is not None]
 
     def get_pack_version_for_session(self, session_id: str, pack_id: str) -> str | None:
-        """Stub — sticky_session not supported for the Redis backend."""
-        return None
+        """Return pack_version from the latest run for this session and pack_id."""
+        if not session_id or not session_id.strip() or not pack_id:
+            return None
+        run_ids = cast(
+            list[str],
+            self._redis.zrevrange(self._session_pack_key(session_id, pack_id), 0, 0),
+        )
+        if not run_ids:
+            for run in self.list_runs_by_session(session_id, limit=50):
+                meta = run.get("metadata") or {}
+                if meta.get("pack_id") == pack_id:
+                    return meta.get("pack_version")
+            return None
+        run = self.get_run(run_ids[0])
+        if run is None:
+            return None
+        meta = run.get("metadata") or {}
+        version = meta.get("pack_version")
+        return str(version) if version is not None else None
 
     def health_check(self) -> tuple[str, str]:
         try:
@@ -990,8 +1013,27 @@ class PostgresRunHistory:
         return [self._row_to_dict(row) for row in rows]
 
     def get_pack_version_for_session(self, session_id: str, pack_id: str) -> str | None:
-        """Stub — sticky_session not supported for the Postgres backend."""
-        return None
+        """Return pack_version from the latest run for this session and pack_id."""
+        if not session_id or not session_id.strip() or not pack_id:
+            return None
+        with self._lock:
+            row = self._conn.execute(
+                """
+                SELECT metadata_json FROM run_history
+                WHERE metadata_json::jsonb->>'session_id' = %s
+                  AND metadata_json::jsonb->>'pack_id' = %s
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (session_id, pack_id),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            meta = json.loads(row[0])
+            version = meta.get("pack_version")
+            return str(version) if version is not None else None
+        except (json.JSONDecodeError, TypeError):
+            return None
 
     def health_check(self) -> tuple[str, str]:
         try:

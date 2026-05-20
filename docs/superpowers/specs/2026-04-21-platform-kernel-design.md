@@ -174,6 +174,12 @@ Les fichiers listés dans la version initiale de ce document ont été étendus 
 - **Connecteur optionnel** — `ResearchAnalysisPack(connector=...)` ; API via `CONNECTOR_ENABLED` / `CONNECTOR_ID` et `core/connectors.py` (`example_memory`).
 - Tests : `tests/test_research_only_pack.py`, `tests/test_connector_pack.py`, `tests/test_core_connectors.py`, `tests/test_api_connector.py`.
 
+### Sprint 3 (livré)
+
+- **Connecteurs** `http` + `rag` ; validation settings (`CONNECTOR_HTTP_URL`, `RAG_ENABLED` pour `rag`).
+- **Control plane** — `PolicyRegistry`, `enforce.py`, application API.
+- **Sticky Redis/Postgres** — `get_pack_version_for_session` pour production multi-worker friendly (préférer Redis/Postgres + `X-Pack-Version` si besoin).
+
 ---
 
 ## Risques et mitigations

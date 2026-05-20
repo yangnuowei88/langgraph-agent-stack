@@ -1,11 +1,46 @@
 """
-control_plane — Governance and policy **types** for a future control surface.
+control_plane — Pack-level policies and enforcement helpers.
 
-This package does not enforce rules, serve HTTP, or replace ``PackRegistry``.
-It provides shared dataclasses so packs and API code can converge on one vocabulary
-in Sprint 2+ without introducing a policy engine yet.
+Policies are registered explicitly (Approach B). The API applies constraints
+via ``control_plane.enforce`` at request boundaries.
 """
 
+from control_plane.enforce import (
+    effective_budget_usd,
+    effective_stream_timeout_seconds,
+    validate_query_for_pack,
+)
 from control_plane.policies import ExecutionConstraints, PackPolicy
+from control_plane.registry import PolicyRegistry
 
-__all__ = ["ExecutionConstraints", "PackPolicy"]
+PolicyRegistry.register(
+    PackPolicy(
+        pack_id="research_analysis",
+        constraints=ExecutionConstraints(
+            max_query_chars=2000,
+            stream_timeout_seconds=None,
+            budget_usd_ceiling=None,
+        ),
+        labels=frozenset({"default", "full-pipeline"}),
+    )
+)
+PolicyRegistry.register(
+    PackPolicy(
+        pack_id="research_only",
+        constraints=ExecutionConstraints(
+            max_query_chars=2000,
+            stream_timeout_seconds=None,
+            budget_usd_ceiling=None,
+        ),
+        labels=frozenset({"research-only"}),
+    )
+)
+
+__all__ = [
+    "ExecutionConstraints",
+    "PackPolicy",
+    "PolicyRegistry",
+    "effective_budget_usd",
+    "effective_stream_timeout_seconds",
+    "validate_query_for_pack",
+]

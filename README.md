@@ -79,6 +79,12 @@ User Query
 - **Second domain pack** — `research_only` (`ResearchOnlyPack`) registered alongside `research_analysis`; use `POST /packs/research_only/run` for research-only output.
 - **Optional retrieval connector** — `CONNECTOR_ENABLED` + `CONNECTOR_ID` inject a built-in connector into `ResearchAnalysisPack` on `/run` and `/packs/research_analysis/*` (default id: `example_memory`; query containing `demo` returns canned snippets).
 
+**Platform kernel (Sprint 3)**
+
+- **Connectors** — `http` (`CONNECTOR_HTTP_URL`) and `rag` (`RAG_ENABLED=true`, `CONNECTOR_ID=rag`) in addition to `example_memory`.
+- **Control plane** — `PolicyRegistry` + enforcement at API boundaries (query length, budget, stream timeout per pack).
+- **Sticky sessions** — `get_pack_version_for_session` implemented for **Redis** and **Postgres** run-history backends (SQLite unchanged).
+
 ## Quick Start
 
 **Prerequisites**
@@ -521,7 +527,8 @@ All configuration is loaded from environment variables. Copy `.env.example` to `
 | `API_PORT` | `8000` | TCP port the FastAPI server listens on |
 | `API_KEY` | — | Bearer token for API auth. Leave unset to disable auth. |
 | `CONNECTOR_ENABLED` | `false` | Inject retrieval connector into `research_analysis` runs |
-| `CONNECTOR_ID` | `example_memory` | Built-in connector when enabled (see `core/connectors.py`) |
+| `CONNECTOR_ID` | `example_memory` | `example_memory`, `http`, or `rag` (see `core/connectors.py`) |
+| `CONNECTOR_HTTP_URL` | — | Required when `CONNECTOR_ID=http` |
 
 ### LLM providers
 

@@ -170,6 +170,11 @@ class Settings(BaseSettings):
         validation_alias="CONNECTOR_ID",
         description="Built-in connector id when CONNECTOR_ENABLED=true (see core/connectors.py).",
     )
+    connector_http_url: str | None = Field(
+        default=None,
+        validation_alias="CONNECTOR_HTTP_URL",
+        description="Base URL for CONNECTOR_ID=http (query param ``q``, ``limit``).",
+    )
 
     # --- Logging ---
     log_level: LogLevel = Field(
@@ -293,6 +298,12 @@ class Settings(BaseSettings):
                     f"CONNECTOR_ID {self.connector_id!r} is not supported. "
                     f"Use one of: {', '.join(list_connector_ids())}"
                 )
+            if self.connector_id == "http" and not self.connector_http_url:
+                raise ValueError(
+                    "CONNECTOR_HTTP_URL must be set when CONNECTOR_ID=http"
+                )
+            if self.connector_id == "rag" and not self.rag_enabled:
+                raise ValueError("RAG_ENABLED must be true when CONNECTOR_ID=rag")
         return self
 
     @field_validator("redis_url")

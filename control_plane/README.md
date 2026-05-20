@@ -1,33 +1,30 @@
-# Control plane (foundation — Sprint 2)
+# Control plane
 
-This folder holds **types and documentation only**. There is no evaluator, no tenant model, no feature-flag service, and no integration with FastAPI or `PackRegistry` beyond naming compatibility (`pack_id` aligns with registered packs).
+Pack-level policies are registered explicitly in `control_plane/__init__.py` (Approach B, same spirit as `PackRegistry`).
 
-## What the control plane will own (directional)
+## What is enforced today
 
-| Area | Intent (future) |
-|------|-----------------|
-| **Pack-level policies** | Named bundles keyed by `pack_id` — caps, labels, extension metadata. |
-| **Execution constraints** | Advisory limits (`ExecutionConstraints`) that orchestration or packs may honour. |
-| **Governance hooks** | Labels and `extensions` dict reserved for audit, cost centres, or routing hints — **not interpreted here**. |
-| **Feature flags / policy engine** | Explicitly **out of scope** for this skeleton; strings like `labels` are placeholders only. |
+| Mechanism | Where |
+|-----------|--------|
+| `max_query_chars` | `validate_query_for_pack()` — used by API before pack and legacy runs |
+| `budget_usd_ceiling` | `effective_budget_usd()` — passed as `budget_usd` when constructing packs (overridden by `PACK_DEFAULT_BUDGET_USD`) |
+| `stream_timeout_seconds` | `effective_stream_timeout_seconds()` — caps SSE timeouts per pack route and legacy `/run/stream` |
 
-## What this is **not**
+## Registry
 
-- Not a dynamic policy DSL or OPA integration.
-- Not multi-tenant isolation or quota enforcement.
-- Not a replacement for `DEFAULT_PACK_ID` or `PackRegistry.register()`.
+```python
+from control_plane import PolicyRegistry, PackPolicy, ExecutionConstraints
 
-## Compatibility with `PackRegistry`
+PolicyRegistry.register(
+    PackPolicy(
+        pack_id="my_pack",
+        constraints=ExecutionConstraints(max_query_chars=1500, budget_usd_ceiling=0.50),
+    )
+)
+```
 
-Policies use the same **`pack_id`** strings as `platform.registry.PackRegistry`. Registration remains **explicit and static** in `platform/__init__.py`. This package does **not** register packs or duplicate the registry.
+## What is still not here
 
-## Files
-
-| File | Role |
-|------|------|
-| `policies.py` | `ExecutionConstraints`, `PackPolicy` dataclasses. |
-| `__init__.py` | Public exports for imports: `from control_plane import PackPolicy`. |
-
-## Minimalism
-
-Two frozen dataclasses avoid inventing interfaces before call sites exist. Enforcement belongs in API middleware or pack code in a later sprint.
+- Dynamic policy DSL / OPA
+- Multi-tenant quotas
+- Automatic pack registration from policies (policies reference existing `pack_id` values only)

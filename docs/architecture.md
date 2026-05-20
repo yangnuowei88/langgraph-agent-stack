@@ -131,6 +131,12 @@ Per-pack routes under `/packs/{pack_id}/...` use the registry and pack schemas d
 
 **Legacy vs default pack:** `DEFAULT_PACK_ID` selects `_active_pack_cls` at startup. `MultiAgentGraph` in `core/graph.py` always aliases `ResearchAnalysisPack`. If you point `DEFAULT_PACK_ID` at another pack, legacy `/run` uses `_legacy_pipeline_pack_cls()` (registry class unless tests patch `api.main.MultiAgentGraph`). Prefer `/packs/{pack_id}/run` when the target pack is not `research_analysis`.
 
+## Sprint 3 (delivered)
+
+- **Connectors:** `http` and `rag` ids in `core/connectors.py`; `RagConnector` uses `get_vectorstore()` when `RAG_ENABLED=true`.
+- **Control plane:** `PolicyRegistry` + `control_plane/enforce.py` applied in `api/main.py` (query limits, budget, stream timeout).
+- **Sticky sessions:** Redis and Postgres run-history backends implement `get_pack_version_for_session` (session + `pack_id` index).
+
 ## What Is Not Here Yet (later work)
 
 Capabilities **not** implemented as of this documentation:

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Second domain pack** `research_only` (`ResearchOnlyPack`) with typed `/packs/research_only/run` routes.
+- **Retrieval connectors** — `example_memory`, `http` (`CONNECTOR_HTTP_URL`), and `rag` (`RAG_ENABLED`); API injection via `CONNECTOR_ENABLED` into `ResearchAnalysisPack`.
+- **Control plane enforcement** — `PolicyRegistry`, `control_plane/enforce.py` (per-pack query limits, budget ceiling, stream timeout).
+- **Sticky pack versions** on Redis and Postgres run-history backends (`get_pack_version_for_session`).
+
 ## [0.5.0] - 2026-05-04
 
 ### Added

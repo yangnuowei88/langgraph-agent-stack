@@ -74,6 +74,11 @@ from api.models import (
     RunRequest,
     RunResponse,
 )
+from control_plane.enforce import (
+    effective_budget_usd,
+    effective_stream_timeout_seconds,
+    validate_query_for_pack,
+)
 from core.config import Settings, get_settings
 from core.connectors import resolve_connector
 from core.graph import MultiAgentGraph
@@ -347,13 +352,28 @@ def get_shared_memory() -> Any:
     return _shared_memory
 
 
+def _validate_pack_query(pack_id: str, raw_query: str) -> str:
+    """Validate query text using pack policy constraints and global sanitizer."""
+    try:
+        return validate_query_for_pack(raw_query, pack_id, _input_validator)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+
 def _pack_runtime_kwargs(pack_cls: type) -> dict[str, Any]:
-    """Extra constructor kwargs for packs that support an optional connector."""
-    if _shared_connector is None:
-        return {}
-    if getattr(pack_cls, "pack_id", None) != "research_analysis":
-        return {}
-    return {"connector": _shared_connector}
+    """Extra constructor kwargs: policy budget and optional connector."""
+    kwargs: dict[str, Any] = {}
+    pack_id = getattr(pack_cls, "pack_id", None)
+    if pack_id:
+        budget = effective_budget_usd(pack_id, get_settings())
+        if budget is not None:
+            kwargs["budget_usd"] = budget
+    if _shared_connector is not None and pack_id == "research_analysis":
+        kwargs["connector"] = _shared_connector
+    return kwargs
 
 
 def _legacy_pipeline_pack_cls() -> Any:
@@ -515,7 +535,7 @@ def _build_pack_router(
 
         raw_query = body.query if hasattr(body, "query") else str(body)
         try:
-            query = _input_validator.validate(raw_query)
+            query = _validate_pack_query(pack_id, raw_query)
         except AgentValidationError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -534,6 +554,7 @@ def _build_pack_router(
 
                 # Record run in history with pack_version metadata
                 if _shared_memory is not None:
+                    session_id_for_history = getattr(body, "session_id", None) or None
                     _shared_memory.save_run(
                         run_id=run_id,
                         query=query,
@@ -543,6 +564,11 @@ def _build_pack_router(
                         metadata={
                             "pack_id": pack_id,
                             "pack_version": used_version,
+                            **(
+                                {"session_id": session_id_for_history}
+                                if session_id_for_history
+                                else {}
+                            ),
                         },
                     )
 
@@ -607,7 +633,7 @@ def _build_pack_router(
 
         raw_query = body.query if hasattr(body, "query") else str(body)
         try:
-            query = _input_validator.validate(raw_query)
+            query = _validate_pack_query(pack_id, raw_query)
         except AgentValidationError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -628,13 +654,15 @@ def _build_pack_router(
             finally:
                 pack.close()
 
+        stream_timeout = effective_stream_timeout_seconds(pack_id, get_settings())
+
         async def _timed_event_generator() -> AsyncGenerator[str, None]:
             try:
-                async with asyncio.timeout(get_settings().stream_timeout_seconds):
+                async with asyncio.timeout(stream_timeout):
                     async for chunk in _event_generator():
                         yield chunk
             except TimeoutError:
-                yield f"data: {json.dumps({'type': 'error', 'message': f'Stream timed out after {get_settings().stream_timeout_seconds}s'})}\n\n"
+                yield f"data: {json.dumps({'type': 'error', 'message': f'Stream timed out after {stream_timeout}s'})}\n\n"
 
         return StreamingResponse(
             _timed_event_generator(),
@@ -1115,8 +1143,9 @@ async def run_pipeline(
             detail="Server is shutting down.",
         )
 
+    settings = get_settings()
     try:
-        query = _input_validator.validate(body.query)
+        query = _validate_pack_query(settings.default_pack_id, body.query)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1415,7 +1444,7 @@ async def run_stream(
         )
 
     try:
-        query = _input_validator.validate(body.query)
+        query = _validate_pack_query(settings.default_pack_id, body.query)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1436,6 +1465,9 @@ async def run_stream(
 
     session_id = body.session_id or str(uuid.uuid4())
     run_id = str(uuid.uuid4())
+    stream_timeout = effective_stream_timeout_seconds(
+        settings.default_pack_id, settings
+    )
 
     logger.info(
         "POST /run/stream — pipeline started",
@@ -1448,11 +1480,11 @@ async def run_stream(
 
     async def _guarded_stream() -> AsyncGenerator[str, None]:
         try:
-            async with asyncio.timeout(settings.stream_timeout_seconds):
+            async with asyncio.timeout(stream_timeout):
                 async for event in _stream_pipeline(query, session_id, run_id):
                     yield event
         except TimeoutError:
-            yield f"data: {json.dumps({'type': 'error', 'message': f'Stream timed out after {settings.stream_timeout_seconds}s'})}\n\n"
+            yield f"data: {json.dumps({'type': 'error', 'message': f'Stream timed out after {stream_timeout}s'})}\n\n"
 
     return StreamingResponse(
         _guarded_stream(),
