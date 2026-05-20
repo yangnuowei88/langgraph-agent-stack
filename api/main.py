@@ -364,7 +364,9 @@ def _legacy_pipeline_pack_cls() -> Any:
     import sys as _sys
 
     _mod = _sys.modules.get(__name__)
-    _bound_on_module = getattr(_mod, "MultiAgentGraph", None) if _mod is not None else None
+    _bound_on_module = (
+        getattr(_mod, "MultiAgentGraph", None) if _mod is not None else None
+    )
     if _bound_on_module is not None and _bound_on_module is not _active_pack_cls:
         return _bound_on_module
     return _active_pack_cls or MultiAgentGraph
