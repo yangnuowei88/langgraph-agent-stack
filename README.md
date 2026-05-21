@@ -1,6 +1,6 @@
 # langgraph-agent-stack
 
-> Production-ready template for deploying multi-agent LangGraph systems on Kubernetes — skip two weeks of boilerplate and ship your first agent pipeline today.
+> Deployable **production infrastructure** template for multi-agent LangGraph systems on Kubernetes — Helm, observability, CI, and a hardened API baseline. Identity for multi-tenant SaaS is **your** layer (see [Security → API authentication](#security)).
 
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/release/python-3120/)
 [![uv](https://img.shields.io/badge/package%20manager-uv-blueviolet)](https://github.com/astral-sh/uv)
@@ -12,6 +12,8 @@
 ## What is this?
 
 Setting up a production-grade multi-agent system from scratch means wiring together an LLM SDK, a graph orchestrator, a persistent memory backend, a hardened API layer, containerization, and Kubernetes manifests — before you write a single line of domain logic. This template does all of that for you. It is aimed at ML and Data Engineers who want a correct, deployable starting point rather than a toy notebook.
+
+**What “production-ready” means here:** deployable ops baseline (Docker, Helm, Terraform stubs, structured logging, metrics, rate limiting, input validation, CI). On `main`, images are pushed to GHCR with an SPDX SBOM (Syft) and Cosign keyless signatures — see [Supply chain](docs/security.md#8-supply-chain-sbom--image-signing). **What it does not include out of the box:** multi-tenant identity (OAuth2/OIDC, named API keys with revocation/scopes, per-caller audit). The built-in `API_KEY` is a single shared secret suitable for **internal gateways or single-tenant** deployments — see [Security](#security).
 
 The source code implements a Research + Analysis pipeline where two LangGraph agents (`ResearchAgent` and `AnalystAgent`) are orchestrated by a shared graph and served over a FastAPI REST API with SSE streaming.
 
@@ -221,7 +223,11 @@ The runtime image copies `api/`, `core/`, `agents/`, `pack_kernel/`, `domain_pac
 
 The chart lives in `infra/helm/langgraph-agent-stack/`. It requires Helm 3 and a running Kubernetes cluster.
 
+CI validates infrastructure with Checkov (Terraform + Helm), kubeconform, and kube-linter on rendered manifests — locally: `make infra-check` (see `scripts/infra-devsecops.sh`).
+
 ### Install
+
+Bare `helm install` uses chart defaults safe for local try-out (`ENVIRONMENT=development`, no `API_KEY` required). For production, always pass `values.prod.yaml` and provision `API_KEY` via Secret.
 
 ```bash
 helm install langgraph ./infra/helm/langgraph-agent-stack \
@@ -254,16 +260,36 @@ helm uninstall langgraph -n langgraph-agents
 
 | Flag | Default | Description |
 |------|---------|-------------|
+| `config.environment` | `development` | Set to `production` in `values.prod.yaml` (enforces `API_KEY`) |
 | `ingress.enabled` | `false` | Create an Ingress resource |
-| `autoscaling.enabled` | `false` | Enable HorizontalPodAutoscaler |
+| `autoscaling.enabled` | `false` | Enable autoscaling (KEDA or HPA — see `autoscaling.metric`) |
+| `autoscaling.metric` | `keda` | `keda` (Prometheus `active_pipelines`), `active_pipelines` (HPA + adapter), or `cpu` (not recommended for LLM) |
 | `persistence.enabled` | `true` | Persistent volume for SQLite data |
 | `networkPolicy.enabled` | `false` | Restrict pod-to-pod traffic with a NetworkPolicy |
-| `podDisruptionBudget.enabled` | `false` | Create a PodDisruptionBudget |
-| `serviceMonitor.enabled` | `false` | Create a Prometheus ServiceMonitor |
+| `podDisruptionBudget.enabled` | `false` | Create a PodDisruptionBudget (`maxUnavailable: 1` in `values.prod.yaml`) |
+| `topologySpreadConstraints.enabled` | `false` | Spread pods across `topology.kubernetes.io/zone` (enabled in `values.prod.yaml`) |
+| `serviceMonitor.enabled` | `false` | Create a Prometheus ServiceMonitor (required for KEDA scaling) |
 | `secrets.existingSecret` | `""` | Use an existing Secret (External Secrets Operator) |
 | `serviceAccount.create` | `true` | Create a dedicated ServiceAccount |
 
 In production, set `secrets.existingSecret` to point to a secret managed by the [External Secrets Operator](https://external-secrets.io) or Sealed Secrets instead of passing keys via `--set`.
+
+### Autoscaling (production)
+
+LLM agent calls are **I/O-bound** (waiting on remote APIs). CPU utilization stays low even when every worker thread is busy, so **CPU-based HPA mis-scales**. The chart defaults to **KEDA** scaling on the `active_pipelines` Prometheus gauge (already exposed at `/metrics`).
+
+**Prerequisites** (prod overlay enables these by default):
+
+1. [KEDA](https://keda.sh/) installed in the cluster
+2. Prometheus scraping the app (`serviceMonitor.enabled: true`)
+3. `config.memoryBackend: redis` (or postgres) and `rateLimitBackend: redis` for multi-replica
+
+Tune `keda.activePipelinesThreshold` to ~75–90% of `THREAD_POOL_MAX_WORKERS` (default `3` for a pool of `4`).
+
+Alternatives (see `values.yaml`):
+
+- `autoscaling.metric: active_pipelines` — native HPA external metric; requires [prometheus-adapter](https://github.com/kubernetes-sigs/prometheus-adapter) with the rule in `infra/helm/langgraph-agent-stack/examples/prometheus-adapter-rule.yaml`
+- `autoscaling.metric: cpu` — legacy fallback only; annotated as not recommended
 
 ## Infrastructure as Code
 
@@ -463,9 +489,9 @@ This endpoint is exempt from rate limiting so Kubernetes probes are never blocke
 
 ## Security
 
-**Bearer token authentication**
+### API authentication (`API_KEY`)
 
-Set `API_KEY` in your environment to enable authentication. When set, all requests to pipeline endpoints must include an `Authorization: Bearer <token>` header. The `/health`, `/ready`, `/docs`, `/redoc`, and `/openapi.json` endpoints are always exempt.
+The template ships a **single shared Bearer secret** (`API_KEY` env var). When set, pipeline routes require `Authorization: Bearer <token>`; comparison uses constant-time `hmac.compare_digest`. Exempt paths: `/health`, `/ready`, `/docs`, `/redoc`, `/openapi.json`, `/metrics`.
 
 ```bash
 curl -X POST http://localhost:8000/run \
@@ -474,7 +500,25 @@ curl -X POST http://localhost:8000/run \
   -d '{"query": "..."}'
 ```
 
-Leave `API_KEY` unset to disable authentication (suitable for internal deployments behind a gateway).
+`ENVIRONMENT=production` requires `API_KEY` to be set (startup fails otherwise). Leave `API_KEY` unset only for local dev or when auth is terminated upstream (Ingress + oauth2-proxy, API gateway, service mesh).
+
+**Limitations (by design — not bugs):**
+
+| Capability | Built-in `API_KEY` | Typical multi-tenant production |
+|------------|-------------------|--------------------------------|
+| Key rotation | Manual redeploy / secret reload | Named keys, grace period, automated rotation |
+| Scopes / permissions | All-or-nothing | Per-key or per-user RBAC |
+| Per-tenant isolation | One secret for all callers | Tenant-scoped keys or OIDC claims |
+| Audit by caller | Rate limit buckets only | Structured audit log (key id, subject, tenant) |
+| Revocation | Rotate the one secret | Revoke individual keys in DB |
+
+For **multi-tenant SaaS**, add one of:
+
+- **OAuth2 / OIDC** — validate JWTs in middleware (issuer, audience, scopes); map `sub` / `tenant_id` to rate limits and policies.
+- **Named API keys in a datastore** — hash at rest, metadata (tenant, scopes, expiry), revocation without redeploy.
+- **Edge auth** — Kubernetes Ingress with oauth2-proxy, Cloudflare Access, AWS API Gateway, etc., in front of this service.
+
+Rate limiting uses the Bearer token as bucket identity when auth is enabled (per-token, not per-tenant metadata).
 
 **CORS**
 
@@ -528,10 +572,12 @@ All configuration is loaded from environment variables. Copy `.env.example` to `
 | `DEFAULT_PACK_ID` | `research_analysis` | Pack for legacy `POST /run` / `/run/stream` (must be registered) |
 | `API_HOST` | `0.0.0.0` | Host the FastAPI server binds to |
 | `API_PORT` | `8000` | TCP port the FastAPI server listens on |
-| `API_KEY` | — | Bearer token for API auth. Leave unset to disable auth. |
+| `API_KEY` | — | Single shared Bearer secret (required when `ENVIRONMENT=production`). Not multi-tenant — see [Security](#security). |
 | `CONNECTOR_ENABLED` | `false` | Inject retrieval connector into `research_analysis` runs |
 | `CONNECTOR_ID` | `example_memory` | `example_memory`, `http`, or `rag` (see `core/connectors.py`) |
 | `CONNECTOR_HTTP_URL` | — | Required when `CONNECTOR_ID=http` |
+| `CONNECTOR_HTTP_MAX_RESPONSE_BYTES` | `1048576` | Max HTTP connector response body (bytes) |
+| `CONNECTOR_HTTP_MAX_REDIRECTS` | `5` | Redirect cap; each hop SSRF-validated |
 
 ### LLM providers
 
@@ -569,6 +615,8 @@ All configuration is loaded from environment variables. Copy `.env.example` to `
 |----------|---------|-------------|
 | `MAX_RESEARCH_ITERATIONS` | `3` | Safety cap on research loop iterations (max 10) |
 | `MAX_STEP_COUNT` | `20` | Hard limit on total graph steps per run (max 100) |
+| `LLM_REQUEST_TIMEOUT_SECONDS` | `120` | Per-call HTTP timeout for synchronous `llm.invoke()` (distinct from stream timeout) |
+| `MAX_REQUEST_BODY_BYTES` | `1048576` (1 MiB) | Max inbound HTTP body size; enforced before JSON parsing |
 | `STREAM_TIMEOUT_SECONDS` | `120` | Wall-clock timeout for SSE streaming runs |
 | `THREAD_POOL_MAX_WORKERS` | `4` | Size of the thread pool for blocking agent calls (1–64) |
 
@@ -654,12 +702,12 @@ uv run pytest -m integration -v
 ```bash
 uv run ruff check .          # lint
 uv run ruff check . --fix    # lint + auto-fix
-uv run black .               # format
-uv run black --check .       # format check (CI mode)
+uv run ruff format .         # format
+uv run ruff format --check . # format check (CI mode)
 uv run pyright               # typecheck (CI job)
 ```
 
-Ruff, Black, pyright, and pytest run in CI (see `.github/workflows/ci.yml` for optional docker-smoke and integration jobs). Security scanning (gitleaks, bandit, dependency audit) runs via `.github/workflows/security.yml`.
+Ruff (lint + format), pyright, and pytest run in CI (see `.github/workflows/ci.yml` for optional docker-smoke and integration jobs). Security scanning (gitleaks, bandit, dependency audit, Syft SBOM, Trivy) runs via `.github/workflows/security.yml`. Pushes to `main` also publish a signed image to GHCR — see [docs/security.md § Supply chain](docs/security.md#8-supply-chain-sbom--image-signing).
 
 ### Makefile shortcuts
 
@@ -675,8 +723,10 @@ make run-ollama    # Start API server using Ollama provider
 make test          # Run test suite with verbose output
 make test-cov      # Run tests with coverage report
 make lint          # Check code style with ruff
-make format        # Format source code with black
-make check         # Lint + format check without modifying (CI mode)
+make format        # Format source code with ruff
+make check         # Lint + format check + pyright (CI lint + typecheck)
+make typecheck     # pyright only
+make check-security # bandit + pip-audit (CI security gates)
 
 # Docker
 make docker-build  # Build the Docker image
@@ -686,6 +736,7 @@ make docker-down   # Stop and remove all containers
 
 # Helm
 make helm-lint     # Lint the Helm chart
+make infra-check   # DevSecOps: checkov + kubeconform + kube-linter (infra/ CI job)
 make helm-dev      # Deploy to dev environment
 make helm-prod     # Deploy to production environment
 make helm-dry-run  # Simulate a Helm install
@@ -746,7 +797,7 @@ langgraph-agent-stack/
 ├── tests/                  # Unit tests (mocked) + real backend integration tests
 ├── docs/                   # Additional documentation (security, architecture)
 ├── .github/workflows/
-│   ├── ci.yml              # ruff + black + pyright + pytest (+ optional jobs)
+│   ├── ci.yml              # ruff + pyright + pytest (+ optional jobs)
 │   └── security.yml        # gitleaks, bandit, dependency audit
 ├── .dockerignore           # Excludes .env, .git, tests, docs from Docker context
 ├── Makefile                # Developer shortcuts (make test, make lint, etc.)

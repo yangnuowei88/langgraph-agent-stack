@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **LLM JSON cap** — `StructuredLLMPack` rejects parsed responses over 512 KiB.
 - **Prompt injection guards** — `domain_packs/common/prompt_safety.py` wraps untrusted content in delimiters; vertical packs use `format_vertical_prompt`.
 - **Production auth** — `Settings` rejects `ENVIRONMENT=production` without `API_KEY`.
-- **Bandit clean-up** — `secrets.SystemRandom` for retry jitter and traffic split; no bare `except: pass` on connection close.
+- **Bandit clean-up** — retry jitter via tenacity `wait_random_exponential` (stdlib `random`, not `secrets`); pack traffic split uses `random.choices` with `# nosec B311`; no bare `except: pass` on connection close.
 - **Pyright** — `domain_packs/` included in typecheck scope; agent init narrowed for optional members.
 
 ## [0.5.0] - 2026-05-19

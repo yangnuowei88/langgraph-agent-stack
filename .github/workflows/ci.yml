@@ -1,13 +1,13 @@
 # ci.yml — Continuous Integration pipeline for langgraph-agent-stack
 #
 # Jobs:
-#   lint         — ruff (linting + import sort) + black (format check)
+#   lint         — ruff (lint + import sort + format check)
 #   typecheck    — pyright basic type checking
-#   infra-lint   — helm lint + terraform validate
+#   infra-lint   — helm lint, terraform validate, checkov, kubeconform, kube-linter
 #   test         — pytest with coverage via uv
-#   docker-smoke — build Docker image + startup/health validation
+#   docker-smoke — local image build + /health startup validation (PR + main)
 #   integration  — real backend tests (Postgres/Redis via testcontainers)
-#   build        — Docker image build (push to main only)
+#   publish      — GHCR push + Syft SBOM + Cosign keyless sign (main only; not a build test)
 #
 # All Python dependency installation uses uv exclusively (no pip, no poetry).
 
@@ -31,7 +31,7 @@ concurrency:
 
 env:
   PYTHON_VERSION: "3.12"
-  UV_VERSION: "0.5.21"
+  UV_VERSION: "0.11.15"
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 # ---------------------------------------------------------------------------
@@ -39,7 +39,7 @@ env:
 # ---------------------------------------------------------------------------
 jobs:
   lint:
-    name: Lint (ruff + black)
+    name: Lint (ruff)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source
@@ -67,8 +67,8 @@ jobs:
       - name: Run ruff (lint + import sort)
         run: uv run ruff check .
 
-      - name: Run black (format check)
-        run: uv run black --check .
+      - name: Run ruff (format check)
+        run: uv run ruff format --check .
 
 # ---------------------------------------------------------------------------
 # Job 2 — Typecheck
@@ -103,10 +103,10 @@ jobs:
         run: uv run pyright
 
 # ---------------------------------------------------------------------------
-# Job 3 — Infrastructure lint
+# Job 3 — Infra DevSecOps (Helm, Terraform, K8s policy)
 # ---------------------------------------------------------------------------
   infra-lint:
-    name: Infra lint (Helm + Terraform)
+    name: Infra DevSecOps (Helm + Terraform + K8s)
     runs-on: ubuntu-latest
     steps:
       - name: Checkout source
@@ -118,12 +118,6 @@ jobs:
       - name: Install Terraform
         uses: hashicorp/setup-terraform@v4
 
-      - name: Helm lint
-        run: helm lint infra/helm/langgraph-agent-stack
-
-      - name: Helm template (render validation)
-        run: helm template test-release infra/helm/langgraph-agent-stack
-
       - name: Terraform fmt check (all)
         run: terraform -chdir=infra/terraform fmt -check -recursive
 
@@ -134,6 +128,12 @@ jobs:
             terraform -chdir="$dir" init -backend=false -input=false
             terraform -chdir="$dir" validate
           done
+
+      - name: Install Checkov
+        run: pip install "checkov==3.2.440"
+
+      - name: Infra DevSecOps (checkov, kubeconform, kube-linter)
+        run: bash scripts/infra-devsecops.sh
 
 # ---------------------------------------------------------------------------
 # Job 4 — Test
@@ -168,7 +168,7 @@ jobs:
             uv-${{ runner.os }}-${{ matrix.python-version }}-
 
       - name: Install all dependencies (including dev)
-        run: uv sync --frozen
+        run: uv sync --frozen --all-extras
 
       - name: Run pytest with coverage
         run: |
@@ -238,20 +238,36 @@ jobs:
         run: uv run pytest -m integration --tb=short -v
 
 # ---------------------------------------------------------------------------
-# Job 7 — Build Docker image (push to main only)
+# Job 7 — Publish to GHCR + supply chain (main only)
+# Not a build smoke test — that is docker-smoke. This job only runs after
+# smoke passes and publishes a signed, SBOM-attached image to the registry.
 # ---------------------------------------------------------------------------
-  build:
-    name: Build Docker image
+  publish:
+    name: Publish container image (GHCR)
     runs-on: ubuntu-latest
-    needs: test
+    needs: [test, docker-smoke]
     # Only run on push to main — not on pull requests
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write   # Cosign keyless signing via GitHub OIDC → Sigstore
+    env:
+      REGISTRY: ghcr.io
+      IMAGE_NAME: ${{ github.repository }}
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Cache Docker layers
         uses: actions/cache@v4
@@ -261,23 +277,56 @@ jobs:
           restore-keys: |
             buildx-${{ runner.os }}-
 
-      - name: Build Docker image
+      - name: Extract image metadata (OCI labels + tags)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=,format=long
+
+      - name: Build and push Docker image
+        id: push
         uses: docker/build-push-action@v7
         with:
           context: .
           file: infra/Dockerfile
-          push: false
-          tags: |
-            langgraph-agent-stack:latest
-            langgraph-agent-stack:${{ github.sha }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=local,src=/tmp/.buildx-cache
           cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
-          # Build args can be injected here if needed:
-          # build-args: |
-          #   APP_VERSION=${{ github.sha }}
 
       # Rotate the cache to prevent unbounded growth
       - name: Rotate Buildx cache
         run: |
           rm -rf /tmp/.buildx-cache
           mv /tmp/.buildx-cache-new /tmp/.buildx-cache
+
+      - name: Generate SBOM (Syft / SPDX)
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3.9.2
+
+      - name: Attach SBOM to image
+        run: |
+          cosign attach sbom --sbom sbom.spdx.json \
+            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}"
+
+      - name: Sign container image (Cosign keyless OIDC)
+        run: |
+          cosign sign --yes \
+            "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.push.outputs.digest }}"
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-sbom-spdx
+          path: sbom.spdx.json
+          retention-days: 90

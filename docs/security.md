@@ -14,7 +14,8 @@ default, what requires operator configuration, and how to report vulnerabilities
 5. [Kubernetes Hardening](#5-kubernetes-hardening)
 6. [Rate Limiting and Input Validation](#6-rate-limiting-and-input-validation)
 7. [Automated Security Scanning](#7-automated-security-scanning)
-8. [Reporting Vulnerabilities](#8-reporting-vulnerabilities)
+8. [Supply Chain (SBOM & Image Signing)](#8-supply-chain-sbom--image-signing)
+9. [Reporting Vulnerabilities](#9-reporting-vulnerabilities)
 
 ---
 
@@ -45,6 +46,9 @@ The following controls ship enabled and require no operator action.
   - The `Server` header is removed to avoid advertising the runtime stack.
 - **Rate limiting** (60 requests per minute per client IP, sliding window) is
   enforced on all endpoints except `/health`.
+- **Request body size cap** (`MAX_REQUEST_BODY_BYTES`, default 1 MiB): middleware
+  rejects oversized POST/PUT/PATCH bodies with HTTP 413 before JSON parsing
+  (checks ``Content-Length`` and stream-bounded reads for chunked uploads).
 - **Input validation** (`core/security.InputValidator`) rejects queries that
   contain prompt-injection markers, SSRF-style internal endpoint references,
   server-side template injection syntax, path traversal sequences, and null bytes
@@ -76,6 +80,11 @@ The following controls ship enabled and require no operator action.
   used and development dependencies are excluded from the production image.
 - The CI pipeline runs `pip-audit` on every push/PR and weekly to catch newly
   disclosed CVEs.
+- On every PR, Syft generates an SPDX SBOM and Trivy scans the built image for
+  HIGH/CRITICAL CVEs (`.github/workflows/security.yml`).
+- On every push to `main`, the image is published to GHCR with an SPDX SBOM
+  attached and a Cosign keyless signature (`.github/workflows/ci.yml` `publish`
+  job). See [§ Supply chain](docs/security.md#8-supply-chain-sbom--image-signing).
 
 ---
 
@@ -105,22 +114,33 @@ Never combine `allow_origins=["*"]` with `allow_credentials=True`.
 
 ### Authentication and authorisation
 
-The template includes a **Bearer token authentication** middleware activated by
-setting the `API_KEY` environment variable. When `API_KEY` is set, every request
-must include an `Authorization: Bearer <token>` header whose value matches the
-configured key. The comparison uses `hmac.compare_digest` for constant-time
-evaluation, preventing timing side-channel attacks.
+The template includes a **single shared Bearer secret** activated by the `API_KEY`
+environment variable. When `API_KEY` is set, every request must include an
+`Authorization: Bearer <token>` header whose value matches the configured key.
+The comparison uses `hmac.compare_digest` for constant-time evaluation,
+preventing timing side-channel attacks.
+
+This is **dev / internal-gateway grade** authentication: one secret for all
+callers, no rotation workflow, no scopes, no per-tenant keys, and no structured
+audit log keyed by caller identity (only rate-limit bucket separation by token).
 
 The following paths are exempt from authentication so they remain accessible
-without a token: `/health`, `/docs`, `/redoc`, `/openapi.json`.
+without a token: `/health`, `/ready`, `/docs`, `/redoc`, `/openapi.json`,
+`/metrics`.
 
-Leave `API_KEY` unset to disable authentication entirely (suitable for internal
-deployments behind a gateway).
+Leave `API_KEY` unset to disable authentication entirely (suitable when auth
+is enforced upstream).
 
-For stricter production environments you may additionally layer on:
+**Multi-tenant production** should not rely on this alone. Add one or more of:
 
-- An OAuth 2.0 / OIDC token validation middleware.
-- A Kubernetes `Ingress` with an auth annotation (e.g. oauth2-proxy).
+| Approach | When to use |
+|----------|-------------|
+| OAuth 2.0 / OIDC JWT middleware | User-facing SaaS, fine-grained scopes via claims |
+| Named API keys in DB (hash + metadata) | Machine clients, per-tenant keys with revocation |
+| Ingress / API gateway auth (oauth2-proxy, etc.) | Centralised policy, minimal app changes |
+
+See also `control_plane/README.md` — tenant quotas and dynamic policy are not
+implemented yet.
 
 ### TLS termination
 
@@ -273,6 +293,8 @@ Alternative secret management solutions:
 | `TAVILY_API_KEY` | — | Required when `SEARCH_PROVIDER=tavily`. |
 | `SERPAPI_API_KEY` | — | Required when `SEARCH_PROVIDER=serpapi`. |
 | `THREAD_POOL_MAX_WORKERS` | `4` | Size of the ThreadPoolExecutor for blocking agent calls (1–64). |
+| `LLM_REQUEST_TIMEOUT_SECONDS` | `120` | Per-call HTTP timeout for synchronous LLM requests (`llm.invoke`). |
+| `MAX_REQUEST_BODY_BYTES` | `1048576` | Max inbound HTTP body size; enforced before JSON parsing. |
 | `STREAM_TIMEOUT_SECONDS` | `120` | Wall-clock timeout for SSE streaming runs. |
 
 ---
@@ -388,7 +410,7 @@ in ``api/main.py``. Backends:
 | ``RATE_LIMIT_BACKEND`` | Behaviour |
 |---|---|
 | ``memory`` (default) | Per-process buckets — fine for single replica / dev |
-| ``redis`` | Shared buckets across pods — **required for HPA** |
+| ``redis`` | Shared buckets across pods — **required for multi-replica autoscaling** |
 
 Client identity for the limiter:
 
@@ -430,17 +452,18 @@ _DANGEROUS_PATTERNS.append(
 
 ## 7. Automated Security Scanning
 
-The `.github/workflows/security.yml` pipeline runs three scanners on every push
-to `main`, every pull request, and weekly on Monday at 06:00 UTC.
+The `.github/workflows/security.yml` pipeline runs on every push to `main`, every
+pull request, and weekly on Monday at 06:00 UTC.
 
 | Job | Tool | What it detects |
 |---|---|---|
 | `secrets-scan` | gitleaks | Committed credentials, API keys, tokens in git history |
 | `dependency-audit` | pip-audit | Known CVEs in Python dependencies (PyPI advisory database) |
 | `sast` | bandit | Python SAST: hardcoded passwords, insecure deserialization, subprocess injection, etc. |
+| `image-scan` | Syft + Trivy | SPDX SBOM artifact + HIGH/CRITICAL CVEs in the container image |
 
 All results are uploaded as GitHub Actions artifacts (30-day retention) and, for
-`bandit` and `gitleaks`, as SARIF files visible in the GitHub Security tab
+`bandit`, `gitleaks`, and `trivy`, as SARIF files visible in the GitHub Security tab
 (requires GitHub Advanced Security for private repositories).
 
 To run scans locally:
@@ -457,11 +480,81 @@ uv run pip-audit
 # bandit
 uv tool install "bandit[sarif]"
 uv tool run bandit --recursive --severity-level medium api/ core/ agents/
+
+# syft (SBOM from a local image)
+brew install syft   # or: https://github.com/anchore/syft/releases
+syft packages langgraph-agent-stack:local -o spdx-json > sbom.spdx.json
+
+# trivy (container scan)
+brew install trivy
+trivy image --severity HIGH,CRITICAL langgraph-agent-stack:local
 ```
 
 ---
 
-## 8. Reporting Vulnerabilities
+## 8. Supply Chain (SBOM & Image Signing)
+
+On every push to `main`, the CI `publish` job (`.github/workflows/ci.yml`) publishes
+a production image to **GitHub Container Registry** and attaches supply-chain
+metadata:
+
+| Step | Tool | Output |
+|---|---|---|
+| Build & push | Docker Buildx | `ghcr.io/<owner>/<repo>:latest` and `:sha` |
+| SBOM | [Syft](https://github.com/anchore/syft) via `anchore/sbom-action` | SPDX JSON (artifact + registry attachment) |
+| Sign | [Cosign](https://github.com/sigstore/cosign) keyless (GitHub OIDC → Sigstore) | OCI signature on the image digest |
+
+Pull requests do **not** push or sign images. The security workflow still builds
+locally and uploads an SPDX SBOM artifact for review.
+
+### Pull the signed image
+
+```bash
+# Authenticate to GHCR (read packages scope)
+echo "$GITHUB_TOKEN" | docker login ghcr.io -u USERNAME --password-stdin
+
+docker pull ghcr.io/<owner>/langgraph-agent-stack:latest
+```
+
+For private repositories, grant the deploying principal `read:packages` on the
+repository or organisation.
+
+### Verify the Cosign signature (keyless OIDC)
+
+Install Cosign, then verify against the workflow identity that signed the image:
+
+```bash
+IMAGE="ghcr.io/<owner>/langgraph-agent-stack"
+DIGEST="$(docker buildx imagetools inspect "${IMAGE}:latest" --format '{{json .}}' | jq -r '.manifest.digest')"
+
+cosign verify \
+  --certificate-identity "https://github.com/<owner>/langgraph-agent-stack/.github/workflows/ci.yml@refs/heads/main" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  "${IMAGE}@${DIGEST}"
+```
+
+A successful verification confirms the image was built and signed by the CI
+workflow on `main` — not that the image is vulnerability-free (use Trivy/SBOM for
+that).
+
+### Inspect the attached SBOM
+
+```bash
+cosign download sbom "${IMAGE}@${DIGEST}" > sbom.spdx.json
+```
+
+Or download the `container-sbom-spdx` artifact from the GitHub Actions run.
+
+### Operator checklist
+
+- Pin deployments to **digest** (`image@sha256:…`) rather than floating `:latest`.
+- Re-verify signatures in your deploy pipeline before rolling out.
+- Feed SPDX SBOMs into your organisation's dependency/VEX tooling if required
+  (e.g. compliance, SBOM inventory).
+
+---
+
+## 9. Reporting Vulnerabilities
 
 If you discover a security vulnerability in this template, please report it
 responsibly.

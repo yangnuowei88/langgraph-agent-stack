@@ -4,7 +4,7 @@
 #   secrets-scan   — gitleaks: detect secrets and credentials committed to the repo
 #   dependency-audit — pip-audit: identify known CVEs in Python dependencies
 #   sast           — bandit: static application security testing for Python code
-#   image-scan     — trivy: container image vulnerability scan
+#   image-scan     — syft SBOM + trivy container vulnerability scan
 #
 # Triggers:
 #   push / pull_request  — on every change to the main branch
@@ -37,7 +37,7 @@ concurrency:
 
 env:
   PYTHON_VERSION: "3.12"
-  UV_VERSION: "0.5.21"
+  UV_VERSION: "0.11.15"
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 # ---------------------------------------------------------------------------
@@ -222,10 +222,10 @@ jobs:
             api/ core/ agents/ pack_kernel/ domain_packs/ connectors/ control_plane/
 
 # ---------------------------------------------------------------------------
-# Job 4 — Container image vulnerability scan with Trivy
+# Job 4 — SBOM generation (Syft) + container vulnerability scan (Trivy)
 # ---------------------------------------------------------------------------
   image-scan:
-    name: Container image scan (Trivy)
+    name: Container SBOM & scan (Syft + Trivy)
     runs-on: ubuntu-latest
     env:
       ANTHROPIC_API_KEY: test-key-not-real
@@ -235,6 +235,20 @@ jobs:
 
       - name: Build Docker image
         run: docker build -f infra/Dockerfile -t langgraph-agent-stack:scan .
+
+      - name: Generate SBOM (Syft / SPDX)
+        uses: anchore/sbom-action@v0
+        with:
+          image: langgraph-agent-stack:scan
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Upload container SBOM
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-sbom-spdx
+          path: sbom.spdx.json
+          retention-days: 30
 
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@v0.36.0
