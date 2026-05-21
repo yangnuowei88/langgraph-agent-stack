@@ -19,8 +19,12 @@ from langchain_core.outputs import ChatGeneration, LLMResult
 from core.cost import (
     BudgetExceededError,
     CostTracker,
+    UnknownModelPricingError,
     _compute_cost,
+    compute_call_cost,
+    estimate_worst_case_call_cost,
     load_cost_table,
+    resolve_model_pricing,
 )
 
 # ---------------------------------------------------------------------------
@@ -104,10 +108,64 @@ def test_compute_cost_known_model() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_compute_cost_unknown_model_returns_zero() -> None:
-    """_compute_cost returns 0.0 for an unrecognised model — never raises."""
+def test_compute_cost_unknown_model_returns_zero_in_development() -> None:
+    """Unknown models cost $0 in development with a warning — never raises."""
     cost = _compute_cost("totally-unknown-model-xyz", 1000, 1000)
     assert cost == 0.0
+
+
+def test_compute_cost_unknown_model_raises_in_production(monkeypatch) -> None:
+    """Production must fail fast on unknown models so budget caps stay meaningful."""
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    from core.config import get_settings
+
+    get_settings.cache_clear()
+    try:
+        with pytest.raises(UnknownModelPricingError, match="totally-unknown-model"):
+            compute_call_cost("totally-unknown-model-xyz", 100, 100, strict=True)
+    finally:
+        monkeypatch.delenv("ENVIRONMENT", raising=False)
+        get_settings.cache_clear()
+
+
+def test_resolve_model_pricing_dated_claude_sonnet_4_variant() -> None:
+    """Dated Claude Sonnet 4 IDs resolve via prefix alias."""
+    pricing = resolve_model_pricing("claude-sonnet-4-7-20260301")
+    assert pricing is not None
+    assert pricing.input_per_1k == pytest.approx(0.003)
+
+
+def test_compute_call_cost_applies_cache_read_discount() -> None:
+    """Cache hits bill at ~10% of uncached input rate by default."""
+    full = compute_call_cost("claude-3-5-sonnet-20241022", 1000, 0)
+    cached = compute_call_cost(
+        "claude-3-5-sonnet-20241022",
+        1000,
+        0,
+        cache_read_tokens=1000,
+    )
+    assert cached == pytest.approx(full * 0.1)
+
+
+def test_compute_call_cost_applies_batch_multiplier() -> None:
+    """Batch API calls use the model's batch multiplier (default 50%)."""
+    regular = compute_call_cost("gpt-4o", 1000, 1000)
+    batch = compute_call_cost("gpt-4o", 1000, 1000, batch=True)
+    assert batch == pytest.approx(regular * 0.5)
+
+
+def test_pre_call_budget_blocks_before_llm_end() -> None:
+    """on_chat_model_start rejects calls whose worst-case estimate exceeds budget."""
+    tracker = CostTracker(budget_usd=0.0001)
+    serialized = {"kwargs": {"model": "gpt-4o", "max_tokens": 4096}}
+    messages = [[type("M", (), {"content": "x" * 8000})()]]
+    with pytest.raises(BudgetExceededError):
+        tracker.on_chat_model_start(serialized, messages, invocation_params={"model": "gpt-4o", "max_tokens": 4096})
+
+
+def test_estimate_worst_case_call_cost_uses_max_output() -> None:
+    est = estimate_worst_case_call_cost("gpt-4o-mini", 1000, 2000)
+    assert est == pytest.approx((1000 / 1000) * 0.00015 + (2000 / 1000) * 0.0006)
 
 
 # ---------------------------------------------------------------------------
@@ -221,8 +279,8 @@ def test_load_cost_table_merges_override(tmp_path: Path) -> None:
     override_file.write_text(
         json.dumps(
             {
-                "gpt-4o": [0.009, 0.030],  # override existing entry
-                "my-custom-model": [0.001, 0.002],  # new entry
+                "gpt-4o": [0.009, 0.030],
+                "my-custom-model": [0.001, 0.002],
             }
         ),
         encoding="utf-8",
@@ -230,17 +288,10 @@ def test_load_cost_table_merges_override(tmp_path: Path) -> None:
 
     table = load_cost_table(override_file)
 
-    # External entry overrides built-in
-    assert table["gpt-4o"] == (0.009, 0.030)
-    # New entry added
-    assert table["my-custom-model"] == (0.001, 0.002)
-    # Non-overridden built-in entry still present
+    assert table["gpt-4o"].input_per_1k == pytest.approx(0.009)
+    assert table["gpt-4o"].output_per_1k == pytest.approx(0.030)
+    assert table["my-custom-model"].input_per_1k == pytest.approx(0.001)
     assert "claude-3-5-sonnet-20241022" in table
-
-
-# ---------------------------------------------------------------------------
-# Test 9 — load_cost_table returns built-in table when path is None
-# ---------------------------------------------------------------------------
 
 
 def test_load_cost_table_none_path_returns_builtin() -> None:
@@ -250,7 +301,6 @@ def test_load_cost_table_none_path_returns_builtin() -> None:
     table = load_cost_table(None)
 
     assert table == COST_PER_1K
-    # Ensure it's a copy, not the same object
     assert table is not COST_PER_1K
 
 
@@ -329,6 +379,25 @@ def test_budget_exceeded_error_message_is_english() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_cache_read_tokens_reduce_cost_on_llm_end() -> None:
+    """on_llm_end applies cache_read_input_tokens when providers report them."""
+    msg = AIMessage(content="test")
+    msg.usage_metadata = {
+        "input_tokens": 1000,
+        "output_tokens": 0,
+        "cache_read_input_tokens": 1000,
+    }
+    gen = ChatGeneration(message=msg)
+    result = LLMResult(
+        generations=[[gen]],
+        llm_output={"model_name": "claude-3-5-sonnet-20241022"},
+    )
+    tracker = CostTracker(budget_usd=None)
+    tracker.on_llm_end(result)
+    full = compute_call_cost("claude-3-5-sonnet-20241022", 1000, 0)
+    assert tracker.total_cost_usd == pytest.approx(full * 0.1)
+
+
 def test_anthropic_response_metadata_model_id_extracted() -> None:
     """CostTracker resolves model ID from response_metadata when llm_output omits it.
 
@@ -342,15 +411,12 @@ def test_anthropic_response_metadata_model_id_extracted() -> None:
         "output_tokens": 250,
         "total_tokens": 750,
     }
-    # Simulate Anthropic: model_id lives in response_metadata, not llm_output
     msg.response_metadata = {"model_id": "claude-3-5-sonnet-20241022"}
-
-    from langchain_core.outputs import ChatGeneration
 
     gen = ChatGeneration(message=msg)
     result = LLMResult(
         generations=[[gen]],
-        llm_output={},  # no model_name here
+        llm_output={},
     )
 
     tracker = CostTracker(budget_usd=None)

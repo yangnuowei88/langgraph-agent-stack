@@ -36,7 +36,7 @@ from agents.llm_retry import (
     retry_if_transient_llm_error,
 )
 from core.config import get_settings
-from core.cost import BudgetExceededError, CostTracker
+from core.cost import BudgetExceededError, CostTracker, UnknownModelPricingError
 from core.llm import get_llm
 from core.memory import create_checkpointer
 from core.observability import (
@@ -362,8 +362,9 @@ class BaseAgent(abc.ABC):
     ) -> Any:
         """Invoke the LLM with exponential-backoff retry on transient errors.
 
-        Retries on typed SDK / HTTP exceptions (rate limits, timeouts, 5xx) via
-        tenacity — not string matching on error messages.
+        Retries are handled here only — vendor SDK auto-retries are disabled in
+        :func:`core.llm.get_llm` (``max_retries=0``) to avoid stacked backoff.
+        Uses tenacity on typed SDK / HTTP exceptions (rate limits, timeouts, 5xx).
 
         Args:
             messages: LangChain message list to send.
@@ -386,6 +387,8 @@ class BaseAgent(abc.ABC):
                 t0 = time.monotonic()
                 result = self.llm.invoke(messages)
             except BudgetExceededError as exc:
+                raise AgentBudgetExceededError(str(exc)) from exc
+            except UnknownModelPricingError as exc:
                 raise AgentBudgetExceededError(str(exc)) from exc
             except Exception as exc:
                 if retry_if_transient_llm_error(exc):
