@@ -17,6 +17,7 @@ from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, ClassVar
 
+import anyio.from_thread
 from langchain_core.exceptions import OutputParserException
 from langchain_core.output_parsers import JsonOutputParser
 from langgraph.graph import END, StateGraph
@@ -28,6 +29,7 @@ from agents.base_agent import (
     AgentExecutionError,
     AgentTimeoutError,
     AgentValidationError,
+    extract_text_content,
 )
 from connectors.base import BaseConnector, ConnectorRequest, ConnectorResult
 from core.config import get_settings
@@ -57,20 +59,13 @@ class _StructuredState(TypedDict, total=False):
 def _fetch_connector_result_sync(
     connector: BaseConnector, query: str
 ) -> ConnectorResult:
-    """Run async ``connector.fetch`` from a sync graph node."""
+    """Run async ``connector.fetch`` from a sync LangGraph node."""
     request = ConnectorRequest(query=query)
 
     async def _fetch() -> ConnectorResult:
         return await connector.fetch(request)
 
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(_fetch())
-
-    with ThreadPoolExecutor(max_workers=1) as pool:
-        future = pool.submit(asyncio.run, _fetch())
-        return future.result()
+    return anyio.from_thread.run(_fetch)
 
 
 # Maximum raw JSON blob size accepted from LLM responses (512 KiB).
@@ -103,6 +98,7 @@ class StructuredLLMPack(BaseDomainPack):
 
     input_schema: ClassVar[type[BaseModel]]
     output_schema: ClassVar[type[BaseModel]]
+    primary_field: ClassVar[str]
     node_name: ClassVar[str] = "structured_llm_node"
 
     def __init__(
@@ -172,19 +168,11 @@ class StructuredLLMPack(BaseDomainPack):
     @classmethod
     def primary_text(cls, inp: BaseModel) -> str:
         """Text used for policy validation and run-history query field."""
-        for field in (
-            "query",
-            "text",
-            "company",
-            "topic",
-            "ticket_subject",
-            "question",
-        ):
-            if hasattr(inp, field):
-                value = getattr(inp, field)
-                if value:
-                    return str(value)
-        return str(inp.model_dump())[:500]
+        coerced = cls._coerce_input(inp)
+        value = getattr(coerced, cls.primary_field, None)
+        if value:
+            return str(value)
+        return str(coerced.model_dump())[:500]
 
     def _resolve_reference_text(self, inp: BaseModel) -> str:
         parts: list[str] = []
@@ -244,8 +232,8 @@ class StructuredLLMPack(BaseDomainPack):
                     )
                 prompt = self.build_prompt(inp, reference_text=reference_text)
                 response = self._llm.invoke(prompt)
-                raw = (
-                    response.content if hasattr(response, "content") else str(response)
+                raw = extract_text_content(
+                    response.content if hasattr(response, "content") else response
                 )
                 output = self.parse_llm_output(
                     raw,
@@ -309,23 +297,15 @@ class StructuredLLMPack(BaseDomainPack):
         if not query or not query.strip():
             raise AgentValidationError(f"{self.__class__.__name__}.run() needs text.")
         fields = self.input_schema.model_fields
-        if "query" in fields:
-            return self.run_from_input(self.input_schema(query=query.strip()))
-        if "text" in fields:
-            return self.run_from_input(self.input_schema(text=query.strip()))
-        if "company" in fields:
-            return self.run_from_input(self.input_schema(company=query.strip()))
-        if "topic" in fields:
-            return self.run_from_input(self.input_schema(topic=query.strip()))
-        if "ticket_subject" in fields:
-            return self.run_from_input(
-                self.input_schema(ticket_subject=query.strip(), body=query.strip())
+        if self.primary_field not in fields:
+            raise AgentValidationError(
+                f"{self.__class__.__name__}.primary_field "
+                f"'{self.primary_field}' is not on {self.input_schema.__name__}."
             )
-        if "question" in fields:
-            return self.run_from_input(self.input_schema(question=query.strip()))
-        raise AgentValidationError(
-            f"{self.__class__.__name__} has no string fallback field."
-        )
+        payload: dict[str, Any] = {self.primary_field: query.strip()}
+        if self.primary_field == "ticket_subject" and "body" in fields:
+            payload["body"] = query.strip()
+        return self.run_from_input(self.input_schema(**payload))
 
     async def arun(self, query: str) -> BaseModel:
         loop = asyncio.get_running_loop()
@@ -349,24 +329,15 @@ class StructuredLLMPack(BaseDomainPack):
         if not query or not query.strip():
             raise AgentValidationError(f"{self.__class__.__name__}.run() needs text.")
         fields = self.input_schema.model_fields
-        if "query" in fields:
-            body = self.input_schema(query=query.strip())
-        elif "text" in fields:
-            body = self.input_schema(text=query.strip())
-        elif "company" in fields:
-            body = self.input_schema(company=query.strip())
-        elif "topic" in fields:
-            body = self.input_schema(topic=query.strip())
-        elif "ticket_subject" in fields:
-            body = self.input_schema(
-                ticket_subject=query.strip(), body=query.strip()
-            )
-        elif "question" in fields:
-            body = self.input_schema(question=query.strip())
-        else:
+        if self.primary_field not in fields:
             raise AgentValidationError(
-                f"{self.__class__.__name__} has no string fallback field."
+                f"{self.__class__.__name__}.primary_field "
+                f"'{self.primary_field}' is not on {self.input_schema.__name__}."
             )
+        payload: dict[str, Any] = {self.primary_field: query.strip()}
+        if self.primary_field == "ticket_subject" and "body" in fields:
+            payload["body"] = query.strip()
+        body = self.input_schema(**payload)
         async for event in self._iter_stream_events_from_input(body):
             yield event
 

@@ -20,6 +20,7 @@ class HrPolicyQaPack(StructuredLLMPack):
     )
     input_schema = HrPolicyQaInput
     output_schema = HrPolicyQaOutput
+    primary_field = "question"
 
     @classmethod
     def build_prompt(cls, inp: BaseModel, *, reference_text: str = "") -> str:

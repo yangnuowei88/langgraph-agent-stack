@@ -23,6 +23,7 @@ class TalentScreeningPack(StructuredLLMPack):
     )
     input_schema = TalentScreeningInput
     output_schema = TalentScreeningOutput
+    primary_field = "job_description"
 
     @classmethod
     def primary_text(cls, inp: BaseModel) -> str:

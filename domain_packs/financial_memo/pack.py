@@ -20,6 +20,7 @@ class FinancialMemoPack(StructuredLLMPack):
     )
     input_schema = FinancialMemoInput
     output_schema = FinancialMemoOutput
+    primary_field = "topic"
 
     @classmethod
     def build_prompt(cls, inp: BaseModel, *, reference_text: str = "") -> str:

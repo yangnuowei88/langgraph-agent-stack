@@ -23,6 +23,7 @@ class ContractReviewerPack(StructuredLLMPack):
     )
     input_schema = ContractReviewerInput
     output_schema = ContractReviewerOutput
+    primary_field = "query"
 
     @classmethod
     def build_prompt(cls, inp: BaseModel, *, reference_text: str = "") -> str:

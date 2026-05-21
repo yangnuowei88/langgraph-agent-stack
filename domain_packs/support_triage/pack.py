@@ -20,6 +20,7 @@ class SupportTriagePack(StructuredLLMPack):
     )
     input_schema = SupportTriageInput
     output_schema = SupportTriageOutput
+    primary_field = "ticket_subject"
 
     @classmethod
     def build_prompt(cls, inp: BaseModel, *, reference_text: str = "") -> str:

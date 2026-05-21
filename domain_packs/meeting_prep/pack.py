@@ -20,6 +20,7 @@ class MeetingPrepPack(StructuredLLMPack):
     )
     input_schema = MeetingPrepInput
     output_schema = MeetingPrepOutput
+    primary_field = "company"
 
     @classmethod
     def build_prompt(cls, inp: BaseModel, *, reference_text: str = "") -> str:

@@ -23,6 +23,7 @@ class ExecutiveBriefPack(StructuredLLMPack):
     )
     input_schema = ExecutiveBriefInput
     output_schema = ExecutiveBriefOutput
+    primary_field = "text"
 
     @classmethod
     def build_prompt(cls, inp: BaseModel, *, reference_text: str = "") -> str:

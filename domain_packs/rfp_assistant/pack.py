@@ -20,6 +20,7 @@ class RfpAssistantPack(StructuredLLMPack):
     )
     input_schema = RfpAssistantInput
     output_schema = RfpAssistantOutput
+    primary_field = "query"
 
     @classmethod
     def build_prompt(cls, inp: BaseModel, *, reference_text: str = "") -> str:

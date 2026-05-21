@@ -23,11 +23,7 @@ class JobDescriptionWriterPack(StructuredLLMPack):
     )
     input_schema = JobDescriptionWriterInput
     output_schema = JobDescriptionWriterOutput
-
-    @classmethod
-    def primary_text(cls, inp: BaseModel) -> str:
-        data = cls._coerce_input(inp).model_dump()
-        return str(data["role_title"])
+    primary_field = "role_title"
 
     @classmethod
     def build_prompt(cls, inp: BaseModel, *, reference_text: str = "") -> str:
