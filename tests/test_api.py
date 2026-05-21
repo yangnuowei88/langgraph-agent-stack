@@ -729,9 +729,41 @@ def test_run_validation_error_returns_400(test_client: TestClient) -> None:
 
 
 def test_root_redirects_to_docs(test_client: TestClient) -> None:
-    """GET / should redirect to /docs."""
+    """GET / should redirect to /docs in non-production environments."""
     response = test_client.get("/", follow_redirects=False)
     assert response.status_code in (301, 302, 307, 308)
+    assert response.headers.get("location") == "/docs"
+
+
+def test_root_returns_service_info_in_production() -> None:
+    """GET / should return JSON probe hints when docs are disabled."""
+    from core.config import Settings
+    from core.security import RateLimiter
+
+    prod_settings = Settings(
+        llm_provider="anthropic",
+        anthropic_api_key="sk-ant-test123456789012345",
+        environment="production",
+        api_key="test-production-api-key",
+    )
+    permissive = RateLimiter(max_requests=10_000, window_seconds=60.0)
+
+    with (
+        patch("api.main.get_settings", return_value=prod_settings),
+        patch("api.main._rate_limiter", permissive),
+        patch("api.main.get_shared_llm", return_value=MagicMock(spec=True)),
+        patch("api.main.get_shared_checkpointer", return_value=MagicMock()),
+    ):
+        from api.main import app
+
+        with TestClient(app, raise_server_exceptions=False) as client:
+            response = client.get("/")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["service"] == "langgraph-agent-stack"
+    assert body["health"] == "/health"
+    assert body["ready"] == "/ready"
 
 
 def test_research_agent_error_returns_500(test_client: TestClient) -> None:

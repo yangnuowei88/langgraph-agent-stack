@@ -1159,10 +1159,24 @@ async def _run_in_executor(fn: Any, *args: Any) -> Any:
 @app.get(
     "/",
     include_in_schema=False,
-    summary="Root redirect",
+    summary="Root",
+    response_model=None,
 )
-async def root() -> RedirectResponse:
-    """Redirect browser traffic from ``/`` to the interactive API documentation."""
+async def root() -> Response:
+    """In development, redirect browsers to interactive docs.
+
+    In production ``/docs`` is disabled, so return a small JSON payload with
+    probe endpoints instead of redirecting to a 404.
+    """
+    if get_settings().environment == "production":
+        return JSONResponse(
+            content={
+                "service": "langgraph-agent-stack",
+                "version": _APP_VERSION,
+                "health": "/health",
+                "ready": "/ready",
+            }
+        )
     return RedirectResponse(url="/docs", status_code=status.HTTP_302_FOUND)
 
 

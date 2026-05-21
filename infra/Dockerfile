@@ -7,19 +7,14 @@
 # For stricter supply-chain control, append @sha256:<digest> for your target platform.
 FROM python:3.12.13-slim AS builder
 
+ARG UV_VERSION=0.11.15
+
 # Prevent Python from writing .pyc files and enable unbuffered stdout/stderr
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    UV_VERSION=0.11.15
+    PYTHONUNBUFFERED=1
 
-# Install uv from the official installer (no pip, no poetry)
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
-    && curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | sh \
-    && apt-get purge -y --auto-remove curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Ensure uv is on PATH
-ENV PATH="/root/.local/bin:$PATH"
+# Copy uv from the official image — no curl|sh, no build-time network fetch.
+COPY --from=ghcr.io/astral-sh/uv:${UV_VERSION} /uv /usr/local/bin/uv
 
 WORKDIR /build
 
