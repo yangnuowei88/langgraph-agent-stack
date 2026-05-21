@@ -365,6 +365,17 @@ class Settings(BaseSettings):
         ),
     )
 
+    regulated_packs_enabled: bool = Field(
+        default=False,
+        validation_alias="REGULATED_PACKS_ENABLED",
+        description=(
+            "When false (default), HR/legal/finance regulated vertical packs "
+            "(talent_screening, contract_reviewer, etc.) return HTTP 403. "
+            "Enable only after completing the compliance programme documented "
+            "in each pack's COMPLIANCE.md."
+        ),
+    )
+
     @property
     def llm_config(self) -> LLMConfig:
         """Build an :class:`~core.llm.LLMConfig` from the current settings."""

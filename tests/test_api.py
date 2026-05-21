@@ -1427,3 +1427,24 @@ def test_update_pack_version_weight_invalid_body_returns_422(
     )
 
     assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Regulated vertical packs (runtime opt-in gate)
+# ---------------------------------------------------------------------------
+
+
+def test_regulated_pack_run_returns_403_when_disabled(
+    test_client: TestClient,
+) -> None:
+    """Regulated packs must not run unless REGULATED_PACKS_ENABLED=true."""
+    response = test_client.post(
+        "/packs/talent_screening/run",
+        json={
+            "job_description": "Python developer",
+            "resume_text": "Experienced Python developer",
+        },
+    )
+
+    assert response.status_code == 403
+    assert "REGULATED_PACKS_ENABLED" in response.json()["detail"]

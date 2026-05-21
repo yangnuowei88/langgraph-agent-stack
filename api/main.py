@@ -107,6 +107,7 @@ from core.security import (
     rate_limit_client_key,
     resolve_client_ip,
 )
+from domain_packs.common.compliance import assert_regulated_pack_runtime_enabled
 
 configure_logging(level=get_settings().log_level.value)
 logger = logging.getLogger(__name__)
@@ -528,7 +529,7 @@ def verify_api_key(request: Request) -> None:
     One global secret for all callers (no scopes or per-tenant keys). Returns
     ``None`` so callers use ``Depends(verify_api_key)`` only for side effect.
     Also enforced globally via ``auth_middleware``; this dependency documents
-    the contract in OpenAPI for pack routes.
+    the contract in OpenAPI for pack and admin routes.
     """
     _api_key = get_settings().api_key
     if _api_key is None:
@@ -545,6 +546,21 @@ def verify_api_key(request: Request) -> None:
             detail="Invalid or missing Bearer token.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+
+def _ensure_regulated_pack_allowed(pack_id: str) -> None:
+    """Block regulated vertical packs unless the operator has opted in."""
+    settings = get_settings()
+    try:
+        assert_regulated_pack_runtime_enabled(
+            pack_id,
+            regulated_packs_enabled=settings.regulated_packs_enabled,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -590,6 +606,7 @@ def _build_pack_router(
     ) -> Any:
         """Execute the pack pipeline synchronously."""
         _guard_not_shutting_down()
+        _ensure_regulated_pack_allowed(pack_id)
         run_id = str(uuid.uuid4())
 
         # Version pinning via request header
@@ -708,6 +725,7 @@ def _build_pack_router(
     ) -> StreamingResponse:
         """Stream pack pipeline events as Server-Sent Events."""
         _guard_not_shutting_down()
+        _ensure_regulated_pack_allowed(pack_id)
         run_id = str(uuid.uuid4())
 
         requested_version = request.headers.get("X-Pack-Version") or None
@@ -1818,6 +1836,7 @@ async def get_session_history(
             description="Session identifier",
         ),
     ],
+    _auth: Annotated[None, Depends(verify_api_key)],
 ) -> HistoryResponse:
     """
     Return all run records associated with ``session_id``.
@@ -1893,6 +1912,7 @@ async def update_pack_version_weight(
     pack_id: str,
     version: str,
     body: dict[str, Any],
+    _auth: Annotated[None, Depends(verify_api_key)],
 ) -> dict[str, Any]:
     """Set the traffic-split weight for a specific registered pack version."""
     weight = body.get("weight")

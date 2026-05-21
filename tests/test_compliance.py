@@ -12,6 +12,8 @@ from control_plane import PolicyRegistry
 from domain_packs.common.compliance import (
     REGULATED_PACK_IDS,
     TALENT_SCREENING_DISCLAIMER,
+    assert_regulated_pack_runtime_enabled,
+    regulated_pack_disabled_detail,
 )
 from domain_packs.contract_reviewer.pack import ContractReviewerPack
 from domain_packs.contract_reviewer.schemas import ContractReviewerInput
@@ -167,3 +169,31 @@ def test_non_regulated_pack_has_no_compliance_disclaimer_in_policy() -> None:
 def test_regulated_packs_remain_registered() -> None:
     for pack_id in REGULATED_PACK_IDS:
         assert pack_id in PackRegistry.list_packs()
+
+
+def test_assert_regulated_pack_runtime_enabled_blocks_by_default() -> None:
+    with pytest.raises(ValueError, match="REGULATED_PACKS_ENABLED"):
+        assert_regulated_pack_runtime_enabled(
+            "talent_screening",
+            regulated_packs_enabled=False,
+        )
+
+
+def test_assert_regulated_pack_runtime_enabled_allows_when_opted_in() -> None:
+    assert_regulated_pack_runtime_enabled(
+        "talent_screening",
+        regulated_packs_enabled=True,
+    )
+
+
+def test_assert_regulated_pack_runtime_enabled_ignores_non_regulated() -> None:
+    assert_regulated_pack_runtime_enabled(
+        "research_analysis",
+        regulated_packs_enabled=False,
+    )
+
+
+def test_regulated_pack_disabled_detail_names_opt_in_env_var() -> None:
+    detail = regulated_pack_disabled_detail("talent_screening")
+    assert "REGULATED_PACKS_ENABLED" in detail
+    assert "talent_screening" in detail

@@ -130,7 +130,17 @@ without a token: `/health`, `/ready`, `/docs`, `/redoc`, `/openapi.json`,
 `/metrics`.
 
 Leave `API_KEY` unset to disable authentication entirely (suitable when auth
-is enforced upstream).
+is enforced upstream). In that mode **all non-exempt routes are open**, including
+admin endpoints such as ``GET /sessions/{id}/history`` and
+``PATCH /packs/{pack_id}/versions/{version}/weight`` — they declare
+``Depends(verify_api_key)`` for OpenAPI clarity but the dependency is a no-op
+when ``API_KEY`` is unset.
+
+**Regulated vertical packs** (``talent_screening``, ``contract_reviewer``, etc.)
+are registered at startup but **blocked at runtime** unless
+``REGULATED_PACKS_ENABLED=true``. Listing packs via ``GET /packs`` still works;
+``POST /packs/{pack_id}/run`` returns **403** with an explicit opt-in message.
+Enable only after completing each pack's ``COMPLIANCE.md`` programme.
 
 **Multi-tenant production** should not rely on this alone. Add one or more of:
 

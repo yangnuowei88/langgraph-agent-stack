@@ -60,6 +60,25 @@ def default_disclaimer_for_pack(pack_id: str) -> str | None:
     return _DEFAULT_DISCLAIMERS.get(pack_id)
 
 
+def regulated_pack_disabled_detail(pack_id: str) -> str:
+    """Human-readable 403 detail when a regulated pack is invoked without opt-in."""
+    return (
+        f"Regulated vertical pack {pack_id!r} is disabled. Set "
+        "REGULATED_PACKS_ENABLED=true only after completing your compliance "
+        "programme (see the pack's COMPLIANCE.md)."
+    )
+
+
+def assert_regulated_pack_runtime_enabled(
+    pack_id: str,
+    *,
+    regulated_packs_enabled: bool,
+) -> None:
+    """Raise when a regulated pack is requested without explicit operator opt-in."""
+    if pack_id in REGULATED_PACK_IDS and not regulated_packs_enabled:
+        raise ValueError(regulated_pack_disabled_detail(pack_id))
+
+
 def apply_compliance_output(pack_id: str, data: dict[str, Any]) -> dict[str, Any]:
     """Inject mandatory compliance fields when the pack policy requires human review.
 
