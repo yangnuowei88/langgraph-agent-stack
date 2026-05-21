@@ -275,6 +275,35 @@ server_shutting_down: Any | None = None
 requests_rejected_during_shutdown: Any | None = None
 _PROMETHEUS_AVAILABLE = False
 
+# HTTP latency spans sub-second health checks through long SSE streams (STREAM_TIMEOUT_SECONDS).
+_HTTP_DURATION_BUCKETS = (0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0)
+# LLM calls routinely exceed 30s on analysis workloads.
+_LLM_DURATION_BUCKETS = (0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0)
+
+
+def metrics_path_label(scope: dict[str, Any]) -> str:
+    """Return the matched route template for Prometheus ``path`` labels.
+
+    Uses the FastAPI/Starlette route pattern (e.g. ``/packs/{pack_id}/run``)
+    rather than the concrete URL path so session/pack/run IDs do not explode
+    metric cardinality.
+
+    Args:
+        scope: ASGI scope from ``request.scope``.
+
+    Returns:
+        Route template path, or ``"unknown"`` when no route matched.
+    """
+    from fastapi.routing import APIRoute
+
+    route = scope.get("route")
+    if isinstance(route, APIRoute):
+        return route.path
+    path = getattr(route, "path", None)
+    if isinstance(path, str) and path:
+        return path
+    return "unknown"
+
 
 try:
     from prometheus_client import (
@@ -293,7 +322,7 @@ try:
         "http_request_duration_seconds",
         "HTTP request duration in seconds",
         ["path"],
-        buckets=[0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0],
+        buckets=list(_HTTP_DURATION_BUCKETS),
     )
     llm_requests_total = Counter(
         "llm_requests_total",
@@ -304,7 +333,7 @@ try:
         "llm_request_duration_seconds",
         "LLM API call duration in seconds",
         ["provider"],
-        buckets=[0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0],
+        buckets=list(_LLM_DURATION_BUCKETS),
     )
     llm_tokens_total = Counter(
         "llm_tokens_total",

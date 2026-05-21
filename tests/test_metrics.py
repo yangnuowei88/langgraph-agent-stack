@@ -62,6 +62,23 @@ def test_metrics_exempt_from_auth() -> None:
             assert response.status_code == 200
 
 
+@pytest.mark.skipif(
+    not _prometheus_available,
+    reason="prometheus-client not installed",
+)
+def test_http_metrics_use_route_template_not_concrete_path(
+    test_client: TestClient,
+) -> None:
+    """Prometheus ``path`` labels must use route templates, not URL paths with IDs."""
+    session_id = "cardinality-test-session-uuid-12345"
+    test_client.get(f"/sessions/{session_id}/history")
+    metrics = test_client.get("/metrics")
+    assert metrics.status_code == 200
+    body = metrics.text
+    assert f'path="/sessions/{{session_id}}/history"' in body
+    assert session_id not in body
+
+
 # ---------------------------------------------------------------------------
 # X-Request-ID propagation
 # ---------------------------------------------------------------------------

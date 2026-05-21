@@ -94,6 +94,7 @@ from core.observability import (
     http_request_duration_seconds,
     http_requests_total,
     init_tracing,
+    metrics_path_label,
     requests_rejected_during_shutdown,
     server_shutting_down,
     set_request_id,
@@ -1003,14 +1004,15 @@ async def log_requests(request: Request, call_next: Any) -> Any:
         },
     )
 
+    path_label = metrics_path_label(request.scope)
     if http_requests_total is not None:
         http_requests_total.labels(
             method=request.method,
-            path=request.url.path,
+            path=path_label,
             status_code=str(response.status_code),
         ).inc()
     if http_request_duration_seconds is not None:
-        http_request_duration_seconds.labels(path=request.url.path).observe(elapsed_s)
+        http_request_duration_seconds.labels(path=path_label).observe(elapsed_s)
 
     return response
 

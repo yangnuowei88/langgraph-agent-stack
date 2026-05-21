@@ -163,3 +163,59 @@ class TestTraceSpan:
         ):
             with trace_span("failing-span"):
                 raise ValueError("boom")
+
+
+class TestMetricsPathLabel:
+    """Tests for ``metrics_path_label`` — bounded Prometheus cardinality."""
+
+    def test_returns_api_route_template(self) -> None:
+        from fastapi.routing import APIRoute
+
+        from core.observability import metrics_path_label
+
+        route = APIRoute(path="/packs/{pack_id}/run", endpoint=lambda: None, methods=["POST"])
+        label = metrics_path_label({"route": route})
+        assert label == "/packs/{pack_id}/run"
+
+    def test_returns_unknown_when_route_missing(self) -> None:
+        from core.observability import metrics_path_label
+
+        assert metrics_path_label({}) == "unknown"
+
+    def test_starlette_route_with_path_attribute(self) -> None:
+        from starlette.routing import Route
+
+        from core.observability import metrics_path_label
+
+        route = Route("/sessions/{session_id}", endpoint=lambda: None)
+        assert metrics_path_label({"route": route}) == "/sessions/{session_id}"
+
+
+_prometheus_available = False
+try:
+    import prometheus_client  # noqa: F401
+
+    _prometheus_available = True
+except ImportError:
+    pass
+
+
+@pytest.mark.skipif(not _prometheus_available, reason="prometheus-client not installed")
+class TestPrometheusHistogramBuckets:
+    """HTTP/LLM histogram buckets cover long-running agent workloads."""
+
+    def test_http_duration_buckets_include_stream_timeout_range(self) -> None:
+        from core.observability import http_request_duration_seconds
+
+        assert http_request_duration_seconds is not None
+        bounds = list(http_request_duration_seconds._upper_bounds)
+        assert bounds[-2] == 300.0
+        assert 120.0 in bounds
+
+    def test_llm_duration_buckets_include_long_calls(self) -> None:
+        from core.observability import llm_request_duration_seconds
+
+        assert llm_request_duration_seconds is not None
+        bounds = list(llm_request_duration_seconds._upper_bounds)
+        assert bounds[-2] == 300.0
+        assert 120.0 in bounds
