@@ -197,6 +197,7 @@ def test_list_packs_with_metadata_structure() -> None:
     assert len(metadata) >= 1, "At least one pack must be registered"
     for item in metadata:
         assert "pack_id" in item
+        assert "version" in item
         assert "name" in item
         assert "description" in item
         assert "input_schema" in item

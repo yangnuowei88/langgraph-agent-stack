@@ -257,16 +257,18 @@ class PackRegistry:
         """
         result: list[dict[str, Any]] = []
         for pack_id in cls.list_packs():
-            pack_cls = cls.get(pack_id)
-            result.append(
-                {
-                    "pack_id": pack_id,
-                    "name": getattr(pack_cls, "name", ""),
-                    "description": getattr(pack_cls, "description", ""),
-                    "input_schema": pack_cls.input_schema.model_json_schema(),
-                    "output_schema": pack_cls.output_schema.model_json_schema(),
-                }
-            )
+            for pack_version in cls._get_versions(pack_id):
+                pack_cls = pack_version.pack_cls
+                result.append(
+                    {
+                        "pack_id": pack_id,
+                        "version": pack_version.version,
+                        "name": getattr(pack_cls, "name", ""),
+                        "description": getattr(pack_cls, "description", ""),
+                        "input_schema": pack_cls.input_schema.model_json_schema(),
+                        "output_schema": pack_cls.output_schema.model_json_schema(),
+                    }
+                )
         return result
 
     @classmethod
