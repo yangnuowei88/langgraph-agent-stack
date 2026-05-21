@@ -1,5 +1,10 @@
 # GKE Autopilot cluster (root-owned so kubernetes/helm providers can be configured here).
 
+moved {
+  from = module.gke.google_container_cluster.main
+  to   = google_container_cluster.main
+}
+
 resource "google_container_cluster" "main" {
   name     = var.cluster_name
   location = var.region
