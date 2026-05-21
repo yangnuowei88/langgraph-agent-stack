@@ -11,13 +11,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import re
 import threading
 import uuid
 from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, ClassVar
 
+from langchain_core.exceptions import OutputParserException
+from langchain_core.output_parsers import JsonOutputParser
 from langgraph.graph import END, StateGraph
 from pydantic import BaseModel
 from typing_extensions import TypedDict
@@ -75,21 +76,26 @@ def _fetch_connector_result_sync(
 # Maximum raw JSON blob size accepted from LLM responses (512 KiB).
 _MAX_JSON_RESPONSE_BYTES = 512 * 1024
 
+_json_output_parser = JsonOutputParser()
+
 
 def extract_json_object(raw: str) -> dict[str, Any]:
-    """Parse a JSON object from an LLM response (handles fenced blocks)."""
+    """Parse a JSON object from an LLM response using LangChain's JSON parser."""
     if len(raw.encode("utf-8")) > _MAX_JSON_RESPONSE_BYTES:
         raise ValueError("LLM JSON response exceeds maximum allowed size.")
-    text = raw.strip()
-    fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
-    if fence:
-        text = fence.group(1).strip()
-    else:
-        start = text.find("{")
-        end = text.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            text = text[start : end + 1]
-    return json.loads(text)
+    try:
+        parsed = _json_output_parser.parse(raw.strip())
+    except OutputParserException as exc:
+        raise ValueError(f"Could not parse JSON from LLM response: {exc}") from exc
+
+    if isinstance(parsed, dict):
+        return parsed
+    if isinstance(parsed, list):
+        for item in parsed:
+            if isinstance(item, dict):
+                return item
+        raise ValueError("LLM JSON array contains no object.")
+    raise ValueError("LLM response must decode to a JSON object.")
 
 
 class StructuredLLMPack(BaseDomainPack):
