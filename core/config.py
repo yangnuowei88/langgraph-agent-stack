@@ -339,8 +339,9 @@ class Settings(BaseSettings):
             "Optional single shared Bearer secret for API authentication. "
             "When set, all requests except health/docs/metrics must include "
             "'Authorization: Bearer <token>'. Not multi-tenant: no rotation, "
-            "scopes, per-tenant keys, or caller audit — use OAuth/OIDC or "
-            "gateway auth for SaaS. Leave empty to disable (or when auth is upstream)."
+            "scopes, per-tenant keys, or caller audit — rate limits are per "
+            "client IP (not per token). Use OAuth/OIDC or gateway auth for SaaS. "
+            "Leave empty to disable (or when auth is upstream)."
         ),
     )
 

@@ -212,7 +212,8 @@ class TestProxyAwareClientIp:
             == "203.0.0.1"
         )
 
-    def test_rate_limit_key_uses_token_when_auth_enabled(self) -> None:
+    def test_rate_limit_key_uses_ip_with_single_shared_api_key(self) -> None:
+        """Same Bearer token from different peers must not share one bucket."""
         headers = {"Authorization": "Bearer tenant-secret-token"}
         key_a = rate_limit_client_key(
             "10.0.0.1",
@@ -227,6 +228,27 @@ class TestProxyAwareClientIp:
             trust_proxy=False,
             forwarded_allow_ips="",
             api_key="server-api-key",
+        )
+        assert key_a == "ip:10.0.0.1"
+        assert key_b == "ip:10.0.0.2"
+
+    def test_rate_limit_key_uses_token_when_multi_tenant(self) -> None:
+        headers = {"Authorization": "Bearer tenant-secret-token"}
+        key_a = rate_limit_client_key(
+            "10.0.0.1",
+            headers,
+            trust_proxy=False,
+            forwarded_allow_ips="",
+            api_key="server-api-key",
+            rate_limit_per_token=True,
+        )
+        key_b = rate_limit_client_key(
+            "10.0.0.2",
+            headers,
+            trust_proxy=False,
+            forwarded_allow_ips="",
+            api_key="server-api-key",
+            rate_limit_per_token=True,
         )
         assert key_a == key_b
         assert key_a.startswith("token:")

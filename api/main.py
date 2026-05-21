@@ -956,8 +956,9 @@ async def rate_limit_middleware(request: Request, call_next: Any) -> Any:
     """
     Enforce a sliding-window rate limit on all incoming requests.
 
-    Keys are scoped per Bearer token when ``API_KEY`` auth is enabled, else
-    per client IP.  Behind a trusted reverse proxy, set ``TRUST_PROXY_HEADERS``
+    Keys are scoped per client IP.  Per-token buckets apply only when
+    ``rate_limit_per_token`` is enabled for multi-tenant deployments.
+    Behind a trusted reverse proxy, set ``TRUST_PROXY_HEADERS``
     and ``FORWARDED_ALLOW_IPS`` so ``X-Forwarded-For`` is used instead of the
     load-balancer address.
 

@@ -373,14 +373,18 @@ def rate_limit_client_key(
     trust_proxy: bool,
     forwarded_allow_ips: str,
     api_key: str | None,
+    rate_limit_per_token: bool = False,
 ) -> str:
     """Build a sliding-window bucket key for the rate limiter.
 
-    When ``API_KEY`` auth is enabled and a Bearer token is present, the limit
-    is scoped per token (tenant). Otherwise the limit is scoped per client IP
-    (using proxy-aware IP resolution when configured).
+    By default the limit is scoped per client IP (using proxy-aware resolution
+    when configured). Per-token buckets apply only when ``rate_limit_per_token``
+    is True — i.e. when multiple distinct Bearer secrets can be presented
+    (multi-tenant). With the built-in single shared ``API_KEY``, all callers
+    share the same secret so token hashing would collapse to one global bucket;
+    IP scoping is used instead.
     """
-    if api_key:
+    if rate_limit_per_token and api_key:
         auth = headers.get("authorization") or headers.get("Authorization") or ""
         if auth.lower().startswith("bearer "):
             token = auth[7:].strip()

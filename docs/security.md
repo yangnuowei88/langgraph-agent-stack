@@ -169,8 +169,9 @@ Environment equivalents: ``TRUST_PROXY_HEADERS=true`` and
 ``FORWARDED_ALLOW_IPS``. The container entrypoint passes the same CIDR list to
 ``uvicorn --forwarded-allow-ips``.
 
-When ``API_KEY`` is set, authenticated requests are rate-limited **per Bearer
-token**; anonymous requests remain **per IP**.
+When ``API_KEY`` is set, authenticated requests are still rate-limited **per
+client IP** (the shared secret does not identify individual callers). Anonymous
+requests use the same IP-based buckets.
 
 For production workloads with multiple replicas, use ``RATE_LIMIT_BACKEND=redis``
 so limits are enforced across all pods.
@@ -415,9 +416,12 @@ in ``api/main.py``. Backends:
 
 Client identity for the limiter:
 
-1. **Authenticated** (``API_KEY`` set + ``Authorization: Bearer …``): one bucket
-   per token (tenant isolation).
-2. **Otherwise**: one bucket per client IP. With ``TRUST_PROXY_HEADERS=true`` and
+1. **Default (single shared ``API_KEY``)**: one bucket per client IP. All
+   callers share the same Bearer secret, so per-token buckets would collapse
+   to a single global limit.
+2. **Multi-tenant** (``rate_limit_per_token`` when distinct keys exist): one
+   bucket per Bearer token.
+3. **Unauthenticated**: one bucket per client IP. With ``TRUST_PROXY_HEADERS=true`` and
    ``FORWARDED_ALLOW_IPS`` matching your Ingress/LB, the IP is taken from
    ``X-Forwarded-For`` (left-most hop) instead of the load-balancer address.
 
