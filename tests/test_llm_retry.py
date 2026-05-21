@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-import anthropic
 import httpx
-import openai
+import pytest
+
+anthropic = pytest.importorskip("anthropic")
+openai = pytest.importorskip("openai")
 
 from agents.llm_retry import is_retryable_llm_error, retry_if_transient_llm_error
 
