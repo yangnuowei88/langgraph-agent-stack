@@ -70,7 +70,7 @@ packages = [
     "api",
     "connectors",
     "control_plane",
-    "platform",
+    "pack_kernel",
     "domain_packs",
 ]
 
@@ -122,7 +122,7 @@ include = [
     "agents",
     "core",
     "api",
-    "platform",
+    "pack_kernel",
     "domain_packs",
     "control_plane",
     "connectors",

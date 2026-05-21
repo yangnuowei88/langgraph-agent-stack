@@ -63,7 +63,7 @@ User Query
 | `SummariserPack` | `domain_packs/summariser/pack.py` | Single-agent text summariser (`POST /packs/summariser/run`) |
 | `AnalysisOnlyPack` | `domain_packs/analysis_only/pack.py` | Analysis on pre-supplied research (`POST /packs/analysis_only/run`) |
 | `MultiAgentGraph` | `core/graph.py` | Backward-compat alias for `ResearchAnalysisPack` (shim only — new orchestration belongs in a domain pack) |
-| `PackRegistry` | `platform/registry.py` | Explicit registration of domain packs and versions (`platform/__init__.py` registers built-ins at import) |
+| `PackRegistry` | `pack_kernel/registry.py` | Explicit registration of domain packs and versions (`pack_kernel/__init__.py` registers built-ins at import) |
 | `ConversationMemory` | `core/memory.py` | Pluggable checkpoint backend (SQLite, Redis, or PostgreSQL) |
 | `core/security.py` | `core/security.py` | Input validation, per-IP rate limiting, log sanitization |
 | `api/main.py` | `api/main.py` | FastAPI application with lifespan, legacy `/run` routes, and pack routes derived from the registry |
@@ -215,7 +215,7 @@ docker build \
 
 The compose file reads your `.env` file automatically. The application is available at `http://localhost:8000` after the health check passes (about 15 seconds on first startup).
 
-The runtime image copies `api/`, `core/`, `agents/`, `platform/`, `domain_packs/`, `connectors/`, and `control_plane/` into `/app` (see `infra/Dockerfile`). Omitting `platform/` or `domain_packs/` would break pack registration and the default pipeline.
+The runtime image copies `api/`, `core/`, `agents/`, `pack_kernel/`, `domain_packs/`, `connectors/`, and `control_plane/` into `/app` (see `infra/Dockerfile`). Omitting `pack_kernel/` or `domain_packs/` would break pack registration and the default pipeline.
 
 ## Kubernetes Deployment
 
@@ -705,7 +705,7 @@ make clean         # Remove build artifacts and caches
 
 ```
 langgraph-agent-stack/
-├── platform/
+├── pack_kernel/
 │   ├── base_pack.py        # BaseDomainPack contract; PackRegistry in registry.py
 │   └── __init__.py         # Registers built-in packs at import time
 ├── domain_packs/
@@ -760,7 +760,7 @@ langgraph-agent-stack/
 
 1. Create `agents/my_agent.py` inheriting from `BaseAgent` in `agents/base_agent.py`. Implement `build_graph()` and `run()`. Add `run_structured()` if you need typed output (it is not abstract).
 2. Wire the agent into the LangGraph **inside the relevant domain pack** (for the default pipeline, edit `domain_packs/research_analysis/pack.py` — add nodes and edges there). Do not put new orchestration logic in `core/graph.py`; that file remains a backward-compatibility shim.
-3. If you add a **new** domain pack, register it explicitly in `platform/__init__.py` (see `PackRegistry.register`) and declare schemas if you want typed pack routes.
+3. If you add a **new** domain pack, register it in `pack_kernel/builtin_packs.py` (see `PackRegistry.register`) and declare schemas if you want typed pack routes.
 4. Expose behavior via existing pack routes (registry-driven) or add a dedicated endpoint in `api/main.py` following the `/research` pattern for a standalone agent.
 5. Add or extend tests (e.g. `tests/test_agents.py`, pack tests); agent patches in tests still target `core.graph` for compatibility — see `CLAUDE.md` Gotchas.
 

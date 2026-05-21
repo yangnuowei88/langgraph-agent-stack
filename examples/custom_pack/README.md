@@ -7,7 +7,7 @@ This folder remains a minimal tutorial for authoring packs outside the built-in 
 ## Register and use (tutorial copy)
 
 ```python
-from platform.registry import PackRegistry
+from pack_kernel.registry import PackRegistry
 from domain_packs.summariser.pack import SummariserPack
 
 PackRegistry.register(SummariserPack)

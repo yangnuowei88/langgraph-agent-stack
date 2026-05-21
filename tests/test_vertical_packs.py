@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from platform.registry import PackRegistry
 from unittest.mock import MagicMock
 
 import pytest
@@ -26,6 +25,7 @@ from domain_packs.rh.talent_screening.pack import TalentScreeningPack
 from domain_packs.rh.talent_screening.schemas import TalentScreeningInput
 from domain_packs.support_triage.pack import SupportTriagePack
 from domain_packs.support_triage.schemas import SupportTriageInput
+from pack_kernel.registry import PackRegistry
 
 VERTICAL_PACK_IDS = (
     "meeting_prep",

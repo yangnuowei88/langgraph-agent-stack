@@ -17,7 +17,6 @@ import threading
 import uuid
 from collections.abc import AsyncGenerator
 from concurrent.futures import ThreadPoolExecutor
-from platform.base_pack import BaseDomainPack
 from typing import Any, Literal
 
 from langgraph.graph import END, StateGraph
@@ -39,6 +38,7 @@ from domain_packs.research_analysis.schemas import (
     ResearchAnalysisInput,
     ResearchAnalysisOutput,
 )
+from pack_kernel.base_pack import BaseDomainPack
 
 logger = logging.getLogger(__name__)
 
@@ -79,8 +79,10 @@ class ResearchAnalysisPack(BaseDomainPack):
 
     Usage (via registry)::
 
-        from platform.registry import PackRegistry
-        import platform  # triggers registration
+        from pack_kernel.registry import PackRegistry
+        from pack_kernel.builtin_packs import register_builtin_packs
+
+        register_builtin_packs()
 
         Pack = PackRegistry.get("research_analysis")
         with Pack(run_id="abc", llm=llm, checkpointer=cp) as pack:

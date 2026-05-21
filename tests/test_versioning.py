@@ -58,9 +58,8 @@ def _make_pack_instance_mock(report=None):
 
 def test_run_history_records_pack_version() -> None:
     """POST /packs/research_analysis/run must call save_run with pack_version in metadata."""
-    from platform.registry import PackRegistry
-
     from core.security import RateLimiter
+    from pack_kernel.registry import PackRegistry
 
     report = _make_mock_analysis_report()
     permissive = RateLimiter(max_requests=10_000, window_seconds=60.0)

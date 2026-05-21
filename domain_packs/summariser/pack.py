@@ -14,7 +14,6 @@ import threading
 import uuid
 from collections.abc import AsyncGenerator
 from concurrent.futures import ThreadPoolExecutor
-from platform.base_pack import BaseDomainPack
 from typing import Any
 
 from langgraph.graph import END, StateGraph
@@ -31,6 +30,7 @@ from core.config import get_settings
 from core.memory import create_checkpointer
 from core.observability import trace_span
 from domain_packs.summariser.schemas import SummaryInput, SummaryOutput
+from pack_kernel.base_pack import BaseDomainPack
 
 logger = logging.getLogger(__name__)
 

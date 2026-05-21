@@ -8,14 +8,14 @@ Before the platform kernel, the Research + Analysis pipeline was implemented dir
 
 ## Sprint 1 target vs what shipped
 
-**Original Sprint 1 goal** was: `BaseDomainPack`, static explicit registration in `platform/__init__.py`, `PackRegistry` with `register` / `get` / `list_packs`, `ResearchAnalysisPack` owning the graph, `core/graph.py` as alias, `DEFAULT_PACK_ID`, and contract tests.
+**Original Sprint 1 goal** was: `BaseDomainPack`, static explicit registration in `pack_kernel/__init__.py`, `PackRegistry` with `register` / `get` / `list_packs`, `ResearchAnalysisPack` owning the graph, `core/graph.py` as alias, `DEFAULT_PACK_ID`, and contract tests.
 
 **Additionally implemented in code** (same release line, not a separate doc sprint): **multiple versions per `pack_id`** with **traffic-split weights**, **`get_schemas`** / **`list_packs_with_metadata`** for discovery, **class-level `version`** and **Pydantic `input_schema` / `output_schema`** on packs, **`budget_usd`** on `BaseDomainPack`, and **HTTP routes** for listing packs, versions, and updating weights (`api/main.py`). The registry remains **Approach B** (explicit registration only; no filesystem or entry-point discovery).
 
 ## Directory Structure
 
 ```
-platform/
+pack_kernel/
   __init__.py           # Imports and registers all built-in packs at package import time
   base_pack.py          # BaseDomainPack ABC — schemas, optional version, budget_usd
   registry.py           # PackRegistry — explicit registry + PackVersion entries
@@ -36,7 +36,7 @@ core/
 
 ### BaseDomainPack
 
-`BaseDomainPack` (in `platform/base_pack.py`) is an abstract base class that defines the runtime contract for all domain packs. Every concrete pack must:
+`BaseDomainPack` (in `pack_kernel/base_pack.py`) is an abstract base class that defines the runtime contract for all domain packs. Every concrete pack must:
 
 - Declare **class-level metadata**: `pack_id`, `name`, `description`.
 - Optionally declare **`version`** (defaults to `"1.0"` — used when multiple implementations share the same `pack_id`).
@@ -48,7 +48,7 @@ The optional `close()` method is a lifecycle hook for releasing resources such a
 
 ### PackRegistry
 
-`PackRegistry` lives in `platform/registry.py`. Registration is **explicit** in `platform/__init__.py` — there is **no** auto-discovery or filesystem scanning.
+`PackRegistry` lives in `pack_kernel/registry.py`. Registration is **explicit** in `pack_kernel/__init__.py` — there is **no** auto-discovery or filesystem scanning.
 
 Internally, each `pack_id` maps to a **list of `PackVersion`** entries (`dataclass` in `registry.py`): each entry holds a **`version`** string, the **`pack_cls`**, and a **`weight`** used when more than one version exists and no explicit version is requested.
 
@@ -68,7 +68,7 @@ Internally, each `pack_id` maps to a **list of `PackVersion`** entries (`datacla
 
 A domain pack is a self-contained implementation of `BaseDomainPack`. It owns its LangGraph graph, its agents, and its wire/schema surface.
 
-Built-in packs registered in `platform/__init__.py`:
+Built-in packs registered in `pack_kernel/__init__.py`:
 
 | `pack_id` | Class | Role |
 |-----------|--------|------|
@@ -85,7 +85,7 @@ Create `domain_packs/my_pack/pack.py` and implement `BaseDomainPack` (see `domai
 
 **Step 2 — Register the pack.**
 
-Open `platform/__init__.py` and add:
+Open `pack_kernel/__init__.py` and add:
 
 ```python
 from domain_packs.my_pack.pack import MyPack
@@ -95,8 +95,8 @@ PackRegistry.register(MyPack)
 **Step 3 — Verify registration.**
 
 ```python
-import platform  # triggers __init__.py
-from platform.registry import PackRegistry
+import pack_kernel  # noqa: F401 — ensure kernel package is importable
+from pack_kernel.registry import PackRegistry
 
 assert "my_pack" in PackRegistry.list_packs()
 ```
@@ -141,7 +141,7 @@ Per-pack routes under `/packs/{pack_id}/...` use the registry and pack schemas d
 
 Capabilities **not** implemented as of this documentation:
 
-- **Dynamic pack loading** — loading packs from arbitrary paths or third-party packages without editing `platform/__init__.py`.
+- **Dynamic pack loading** — loading packs from arbitrary paths or third-party packages without editing `pack_kernel/__init__.py`.
 - **Full control plane** — no cluster-wide “activate pack for all tenants” separate from process config; **read-only discovery** and **weight adjustment** exist via HTTP for registered packs.
 - **Inter-pack connectors** — no standard mechanism for one pack to consume another pack’s output as a first-class API.
 - **Hot reload** — no reloading pack code without process restart.

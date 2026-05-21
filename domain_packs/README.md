@@ -1,6 +1,6 @@
 # Domain packs
 
-Built-in pipelines registered via `platform/builtin_packs.py` (Approach B — explicit).
+Built-in pipelines registered via `pack_kernel/builtin_packs.py` (Approach B — explicit).
 
 ## Core packs
 
@@ -54,6 +54,6 @@ Packs whose constructor accepts `connector=` receive the shared connector when
 
 1. Subclass `StructuredLLMPack` in `domain_packs/common/structured_llm.py` for single-LLM verticals, or `BaseDomainPack` for multi-agent graphs.
 2. Add `schemas.py` with Pydantic input/output models.
-3. Register in `platform/builtin_packs.py`.
+3. Register in `pack_kernel/builtin_packs.py`.
 4. Add a policy row in `control_plane/__init__.py`.
 5. Tests in `tests/test_vertical_packs.py` (or dedicated file).

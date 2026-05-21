@@ -104,12 +104,10 @@ from core.security import InputValidator, create_rate_limiter
 configure_logging(level=get_settings().log_level.value)
 logger = logging.getLogger(__name__)
 
-# NOTE: load-order sensitive — import local 'platform' package AFTER all other
-# imports so the stdlib-shadowing bootstrap in platform/__init__.py runs safely.
-# The 'import platform as _platform_pkg' side-effect registers built-in packs
-# via PackRegistry.register() inside platform/__init__.py.
-import platform as _platform_pkg  # noqa: E402,F401 — side-effect import (triggers PackRegistry)
-from platform.registry import PackRegistry  # noqa: E402
+from pack_kernel.builtin_packs import register_builtin_packs  # noqa: E402
+from pack_kernel.registry import PackRegistry  # noqa: E402
+
+register_builtin_packs()
 
 # ---------------------------------------------------------------------------
 # Module-level state (populated during lifespan startup)
@@ -257,7 +255,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except KeyError as exc:
         raise RuntimeError(
             f"DEFAULT_PACK_ID '{_settings.default_pack_id}' is not registered. "
-            "Check platform/__init__.py."
+            "Check pack_kernel/__init__.py."
         ) from exc
 
     _shared_connector = resolve_connector(_settings)

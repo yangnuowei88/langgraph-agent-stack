@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from platform.base_pack import BaseDomainPack
+    from pack_kernel.base_pack import BaseDomainPack
 
 
 def all_builtin_pack_classes() -> list[type[BaseDomainPack]]:
@@ -42,7 +42,7 @@ def all_builtin_pack_classes() -> list[type[BaseDomainPack]]:
 
 
 def register_builtin_packs() -> None:
-    from platform.registry import PackRegistry
+    from pack_kernel.registry import PackRegistry
 
     for pack_cls in all_builtin_pack_classes():
         PackRegistry.register(pack_cls)

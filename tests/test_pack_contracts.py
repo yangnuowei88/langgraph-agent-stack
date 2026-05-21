@@ -12,8 +12,6 @@ Verifies:
 from __future__ import annotations
 
 import inspect
-from platform.base_pack import BaseDomainPack, _DefaultPackInput, _DefaultPackOutput
-from platform.registry import PackRegistry
 
 import pytest
 from pydantic import ValidationError
@@ -30,6 +28,8 @@ from domain_packs.research_only.pack import ResearchOnlyPack
 from domain_packs.research_only.schemas import ResearchOnlyInput, ResearchOnlyOutput
 from domain_packs.summariser.pack import SummariserPack
 from domain_packs.summariser.schemas import SummaryInput, SummaryOutput
+from pack_kernel.base_pack import BaseDomainPack, _DefaultPackInput, _DefaultPackOutput
+from pack_kernel.registry import PackRegistry
 
 # ---------------------------------------------------------------------------
 # BaseDomainPack default schema tests

@@ -1,7 +1,7 @@
 """
-platform/registry.py — Static pack registry.
+pack_kernel/registry.py — Static pack registry.
 
-Packs are registered explicitly in platform/__init__.py at import time.
+Packs are registered explicitly in pack_kernel/__init__.py at import time.
 No dynamic loading, no auto-discovery, no magic.
 """
 
@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
-    from platform.base_pack import BaseDomainPack
+    from pack_kernel.base_pack import BaseDomainPack
 
 logger = logging.getLogger(__name__)
 
@@ -45,14 +45,14 @@ class PackRegistry:
 
     Usage::
 
-        from platform.registry import PackRegistry
+        from pack_kernel.registry import PackRegistry
         from my_pack import MyPack
 
         PackRegistry.register(MyPack)
         cls = PackRegistry.get("my_pack")
         instance = cls(run_id="abc", llm=llm, checkpointer=cp)
 
-    All registration happens at startup in platform/__init__.py; the registry
+    All registration happens at startup in pack_kernel/__init__.py; the registry
     is a class-level dict and is shared across the process lifetime.
     """
 

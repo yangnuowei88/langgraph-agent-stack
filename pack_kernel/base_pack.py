@@ -1,5 +1,5 @@
 """
-platform/base_pack.py — Abstract contract for all domain packs.
+pack_kernel/base_pack.py — Abstract contract for all domain packs.
 
 Every domain pack MUST inherit from BaseDomainPack and implement the three
 abstract methods (run, arun, stream_events).  The class-level attributes

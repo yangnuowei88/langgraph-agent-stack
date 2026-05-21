@@ -83,7 +83,7 @@ COPY --from=builder /build/.venv /app/.venv
 COPY api/      ./api/
 COPY core/     ./core/
 COPY agents/   ./agents/
-COPY platform/ ./platform/
+COPY pack_kernel/ ./pack_kernel/
 COPY domain_packs/ ./domain_packs/
 COPY connectors/ ./connectors/
 COPY control_plane/ ./control_plane/

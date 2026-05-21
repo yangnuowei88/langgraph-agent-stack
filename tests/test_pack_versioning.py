@@ -15,11 +15,12 @@ from __future__ import annotations
 
 import random
 from collections.abc import AsyncGenerator
-from platform.base_pack import BaseDomainPack
-from platform.registry import PackRegistry, PackVersion
 from typing import Any
 
 import pytest
+
+from pack_kernel.base_pack import BaseDomainPack
+from pack_kernel.registry import PackRegistry, PackVersion
 
 # ---------------------------------------------------------------------------
 # Minimal concrete packs for testing
@@ -89,13 +90,13 @@ def clean_registry():
     registry must request it explicitly as a parameter.  Making it autouse
     would clear PackRegistry for *all* tests in the session, which breaks
     test_api.py and test_pack_contracts.py because the Python import cache
-    prevents platform/__init__.py from re-registering ResearchAnalysisPack.
+    prevents pack_kernel/__init__.py from re-registering ResearchAnalysisPack.
 
     Teardown re-registers ResearchAnalysisPack so that tests running after
     this fixture (e.g. test_api.py) still find the registry in its normal
     state.
     """
-    from platform.builtin_packs import register_builtin_packs
+    from pack_kernel.builtin_packs import register_builtin_packs
 
     PackRegistry._reset()
     yield
@@ -173,7 +174,7 @@ def test_register_same_pack_id_same_version_emits_warning(
     import logging
 
     PackRegistry.register(_PackV1)
-    with caplog.at_level(logging.WARNING, logger="platform.registry"):
+    with caplog.at_level(logging.WARNING, logger="pack_kernel.registry"):
         PackRegistry.register(_PackV1Replacement)
 
     assert any(
