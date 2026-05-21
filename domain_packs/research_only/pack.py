@@ -108,7 +108,10 @@ class ResearchOnlyPack(BaseDomainPack):
                         checkpointer=self._checkpointer,
                         budget_usd=self._budget_usd,
                     )
-                result: ResearchResult = self._research_agent.run_structured(query)
+                research_agent = self._research_agent
+                if research_agent is None:
+                    raise AgentExecutionError("Research agent failed to initialize")
+                result: ResearchResult = research_agent.run_structured(query)
                 return {
                     **state,
                     "research_result": result.to_dict(),

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import abc
 import logging
-import random
+import secrets
 import time
 import uuid
 from typing import Any, cast
@@ -403,7 +403,7 @@ class BaseAgent(abc.ABC):
                 last_exc = exc
                 if attempt < max_retries:
                     delay = min(base_delay * (2**attempt), max_delay) * (
-                        0.5 + random.random()
+                        0.5 + secrets.SystemRandom().random()
                     )
                     self._log.warning(
                         "LLM call failed (attempt %d/%d), retrying in %.1fs",
@@ -426,7 +426,7 @@ class BaseAgent(abc.ABC):
                     last_exc = exc
                     if attempt < max_retries:
                         delay = min(base_delay * (2**attempt), max_delay) * (
-                            0.5 + random.random()
+                            0.5 + secrets.SystemRandom().random()
                         )
                         self._log.warning(
                             "LLM rate limited (attempt %d/%d), retrying in %.1fs",

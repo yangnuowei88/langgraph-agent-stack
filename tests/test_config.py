@@ -92,3 +92,25 @@ class TestSettingsValidators:
                 memory_backend="postgres",
             )
         assert s.memory_backend.value == "postgres"
+
+    def test_production_requires_api_key(self) -> None:
+        from core.config import Settings
+
+        with pytest.raises(ValidationError, match="API_KEY"):
+            Settings(
+                llm_provider="anthropic",
+                anthropic_api_key="sk-ant-test123456789012345",
+                environment="production",
+                api_key=None,
+            )
+
+    def test_production_with_api_key_succeeds(self) -> None:
+        from core.config import Settings
+
+        s = Settings(
+            llm_provider="anthropic",
+            anthropic_api_key="sk-ant-test123456789012345",
+            environment="production",
+            api_key="prod-secret-token",
+        )
+        assert s.api_key == "prod-secret-token"

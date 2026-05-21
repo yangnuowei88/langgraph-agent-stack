@@ -127,7 +127,9 @@ def test_hsts_present_in_production() -> None:
     mock_checkpointer = MagicMock()
 
     original_env = os.environ.get("ENVIRONMENT", "development")
+    original_api_key = os.environ.get("API_KEY")
     os.environ["ENVIRONMENT"] = "production"
+    os.environ["API_KEY"] = "test-production-api-key"
     get_settings.cache_clear()
     try:
         with (
@@ -145,6 +147,10 @@ def test_hsts_present_in_production() -> None:
                 )
     finally:
         os.environ["ENVIRONMENT"] = original_env
+        if original_api_key is None:
+            os.environ.pop("API_KEY", None)
+        else:
+            os.environ["API_KEY"] = original_api_key
         get_settings.cache_clear()
 
 

@@ -6,6 +6,7 @@ import json
 
 from pydantic import BaseModel
 
+from domain_packs.common.prompt_safety import format_vertical_prompt
 from domain_packs.common.structured_llm import StructuredLLMPack
 from domain_packs.rh.job_description_writer.schemas import (
     JobDescriptionWriterInput,
@@ -25,21 +26,29 @@ class JobDescriptionWriterPack(StructuredLLMPack):
 
     @classmethod
     def primary_text(cls, inp: BaseModel) -> str:
-        assert isinstance(inp, JobDescriptionWriterInput)
-        return inp.role_title
+        data = cls._coerce_input(inp).model_dump()
+        return str(data["role_title"])
 
     @classmethod
     def build_prompt(cls, inp: BaseModel, *, reference_text: str = "") -> str:
-        assert isinstance(inp, JobDescriptionWriterInput)
+        data = cls._coerce_input(inp).model_dump()
         schema = json.dumps(JobDescriptionWriterOutput.model_json_schema(), indent=2)
-        return (
-            "You are an HR business partner writing an inclusive job description.\n"
-            f"Role: {inp.role_title}\n"
-            f"Seniority: {inp.seniority}\n"
-            f"Team context: {inp.team_context or 'not provided'}\n"
-            f"Must-haves: {', '.join(inp.must_haves) or 'not specified'}\n"
-            f"Culture notes: {inp.culture_notes or 'none'}\n\n"
-            "Return ONLY valid JSON matching this schema:\n"
-            f"{schema}\n"
-            "jd_markdown should use inclusive language. Avoid gendered or age-biased terms."
+        must = ", ".join(data.get("must_haves") or []) or "not specified"
+        return format_vertical_prompt(
+            task_instructions=(
+                "You are an HR business partner writing an inclusive job description."
+            ),
+            fields={
+                "Role": str(data["role_title"]),
+                "Seniority": str(data.get("seniority", "mid")),
+                "Team context": str(data.get("team_context") or "not provided"),
+                "Must-haves": must,
+                "Culture notes": str(data.get("culture_notes") or "none"),
+            },
+            output_schema_json=schema,
+            reference_text=reference_text,
+            closing_instructions=(
+                "jd_markdown should use inclusive language. "
+                "Avoid gendered or age-biased terms."
+            ),
         )

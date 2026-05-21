@@ -6,6 +6,7 @@ import json
 
 from pydantic import BaseModel
 
+from domain_packs.common.prompt_safety import format_vertical_prompt
 from domain_packs.common.structured_llm import StructuredLLMPack
 from domain_packs.contract_reviewer.schemas import (
     ContractReviewerInput,
@@ -25,16 +26,19 @@ class ContractReviewerPack(StructuredLLMPack):
 
     @classmethod
     def build_prompt(cls, inp: BaseModel, *, reference_text: str = "") -> str:
-        assert isinstance(inp, ContractReviewerInput)
-        contract = inp.contract_text or reference_text
+        data = cls._coerce_input(inp).model_dump()
+        contract = str(data.get("contract_text") or reference_text)
         schema = json.dumps(ContractReviewerOutput.model_json_schema(), indent=2)
-        return (
-            "You are a commercial legal reviewer. Analyse the contract below.\n"
-            f"Label: {inp.query}\n"
-            f"Type: {inp.contract_type}\n"
-            f"Jurisdiction: {inp.jurisdiction or 'unspecified'}\n\n"
-            f"CONTRACT:\n{contract or '(no text provided)'}\n\n"
-            "Return ONLY valid JSON matching this schema:\n"
-            f"{schema}\n"
-            "Set query to the label. risk_score: 0=low risk, 1=critical risk."
+        return format_vertical_prompt(
+            task_instructions="You are a commercial legal reviewer. Analyse the contract.",
+            fields={
+                "Label": str(data["query"]),
+                "Contract type": str(data.get("contract_type", "msa")),
+                "Jurisdiction": str(data.get("jurisdiction") or "unspecified"),
+                "Contract text": contract or "(no text provided)",
+            },
+            output_schema_json=schema,
+            closing_instructions=(
+                "Set query to the label. risk_score: 0=low risk, 1=critical risk."
+            ),
         )

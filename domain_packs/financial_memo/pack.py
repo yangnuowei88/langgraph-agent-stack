@@ -6,6 +6,7 @@ import json
 
 from pydantic import BaseModel
 
+from domain_packs.common.prompt_safety import format_vertical_prompt
 from domain_packs.common.structured_llm import StructuredLLMPack
 from domain_packs.financial_memo.schemas import FinancialMemoInput, FinancialMemoOutput
 
@@ -22,17 +23,19 @@ class FinancialMemoPack(StructuredLLMPack):
 
     @classmethod
     def build_prompt(cls, inp: BaseModel, *, reference_text: str = "") -> str:
-        assert isinstance(inp, FinancialMemoInput)
-        ref = f"\n\nReference data:\n{reference_text}" if reference_text else ""
+        data = cls._coerce_input(inp).model_dump()
         schema = json.dumps(FinancialMemoOutput.model_json_schema(), indent=2)
-        return (
-            "You are a strategy consultant writing a financial memo (SCQA format).\n"
-            f"Topic: {inp.topic}\n"
-            f"Hypothesis: {inp.hypothesis or 'none stated'}\n"
-            f"Key metrics/context: {inp.metrics or 'none provided'}\n"
-            f"Time horizon: {inp.time_horizon}\n"
-            f"{ref}\n\n"
-            "Return ONLY valid JSON matching this schema:\n"
-            f"{schema}\n"
-            "Set topic from input. Be concise and decision-oriented."
+        return format_vertical_prompt(
+            task_instructions=(
+                "You are a strategy consultant writing a financial memo (SCQA format)."
+            ),
+            fields={
+                "Topic": str(data["topic"]),
+                "Hypothesis": str(data.get("hypothesis") or "none stated"),
+                "Key metrics/context": str(data.get("metrics") or "none provided"),
+                "Time horizon": str(data.get("time_horizon", "12 months")),
+            },
+            output_schema_json=schema,
+            reference_text=reference_text,
+            closing_instructions="Set topic from input. Be concise and decision-oriented.",
         )

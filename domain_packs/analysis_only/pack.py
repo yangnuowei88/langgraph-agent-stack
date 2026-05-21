@@ -106,9 +106,10 @@ class AnalysisOnlyPack(BaseDomainPack):
                         checkpointer=self._checkpointer,
                         budget_usd=self._budget_usd,
                     )
-                report: AnalysisReport = self._analyst_agent.run_structured(
-                    research_result
-                )
+                analyst_agent = self._analyst_agent
+                if analyst_agent is None:
+                    raise AgentExecutionError("Analyst agent failed to initialize")
+                report: AnalysisReport = analyst_agent.run_structured(research_result)
                 return {
                     **state,
                     "analysis_report": report.to_dict(),

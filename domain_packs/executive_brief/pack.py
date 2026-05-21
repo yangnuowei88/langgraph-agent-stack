@@ -6,6 +6,7 @@ import json
 
 from pydantic import BaseModel
 
+from domain_packs.common.prompt_safety import format_vertical_prompt
 from domain_packs.common.structured_llm import StructuredLLMPack
 from domain_packs.executive_brief.schemas import (
     ExecutiveBriefInput,
@@ -25,15 +26,20 @@ class ExecutiveBriefPack(StructuredLLMPack):
 
     @classmethod
     def build_prompt(cls, inp: BaseModel, *, reference_text: str = "") -> str:
-        assert isinstance(inp, ExecutiveBriefInput)
-        content = inp.text or reference_text
+        data = cls._coerce_input(inp).model_dump()
+        content = str(data.get("text") or reference_text)
+        bullet_count = int(data.get("bullet_count") or 5)
         schema = json.dumps(ExecutiveBriefOutput.model_json_schema(), indent=2)
-        return (
-            "You are a chief of staff preparing an executive brief.\n"
-            f"Target audience: {inp.audience}\n"
-            f"Number of bullets: {inp.bullet_count}\n\n"
-            f"SOURCE MATERIAL:\n{content}\n\n"
-            "Return ONLY valid JSON matching this schema:\n"
-            f"{schema}\n"
-            f"Provide exactly {inp.bullet_count} bullets. so_what must be one sharp paragraph."
+        return format_vertical_prompt(
+            task_instructions="You are a chief of staff preparing an executive brief.",
+            fields={
+                "Target audience": str(data.get("audience", "CEO")),
+                "Number of bullets": str(bullet_count),
+                "Source material": content,
+            },
+            output_schema_json=schema,
+            closing_instructions=(
+                f"Provide exactly {bullet_count} bullets. "
+                "so_what must be one sharp paragraph."
+            ),
         )

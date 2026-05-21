@@ -67,6 +67,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
+        populate_by_name=True,
     )
 
     # --- LLM ---
@@ -290,6 +291,11 @@ class Settings(BaseSettings):
     def _validate_backend_urls(self) -> Settings:
         if self.memory_backend.value == "postgres" and not self.postgres_url:
             raise ValueError("POSTGRES_URL must be set when MEMORY_BACKEND=postgres")
+        if self.environment == "production" and not self.api_key:
+            raise ValueError(
+                "API_KEY must be set when ENVIRONMENT=production. "
+                "Disable auth only in development/staging."
+            )
         if self.connector_enabled:
             from core.connectors import list_connector_ids
 

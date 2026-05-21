@@ -8,7 +8,6 @@ No dynamic loading, no auto-discovery, no magic.
 from __future__ import annotations
 
 import logging
-import random
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -141,7 +140,9 @@ class PackRegistry:
         weights = [pv.weight for pv in versions]
         if sum(weights) == 0.0:
             raise KeyError(f"Pack '{pack_id}' has no versions with positive weight.")
-        (selected,) = random.choices(versions, weights=weights, k=1)
+        import random
+
+        (selected,) = random.choices(versions, weights=weights, k=1)  # nosec B311
         return selected.pack_cls
 
     @classmethod

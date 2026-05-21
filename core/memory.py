@@ -876,8 +876,8 @@ class RedisRunHistory:
     def close(self) -> None:
         try:
             self._redis.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Redis close failed (ignored): %s", exc)
 
     @staticmethod
     def _decode(data: dict[str, str]) -> dict[str, Any]:
@@ -1046,8 +1046,8 @@ class PostgresRunHistory:
     def close(self) -> None:
         try:
             self._conn.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Postgres close failed (ignored): %s", exc)
 
     @staticmethod
     def _row_to_dict(row: tuple) -> dict[str, Any]:

@@ -6,6 +6,7 @@ import json
 
 from pydantic import BaseModel
 
+from domain_packs.common.prompt_safety import format_vertical_prompt
 from domain_packs.common.structured_llm import StructuredLLMPack
 from domain_packs.support_triage.schemas import SupportTriageInput, SupportTriageOutput
 
@@ -22,17 +23,19 @@ class SupportTriagePack(StructuredLLMPack):
 
     @classmethod
     def build_prompt(cls, inp: BaseModel, *, reference_text: str = "") -> str:
-        assert isinstance(inp, SupportTriageInput)
-        kb = f"\n\nKnowledge base snippets:\n{reference_text}" if reference_text else ""
+        data = cls._coerce_input(inp).model_dump()
         schema = json.dumps(SupportTriageOutput.model_json_schema(), indent=2)
-        return (
-            "You are a senior customer support lead. Triage this ticket.\n"
-            f"Customer tier: {inp.customer_tier}\n"
-            f"Subject: {inp.ticket_subject}\n"
-            f"Body:\n{inp.body}\n"
-            f"{kb}\n\n"
-            "Return ONLY valid JSON matching this schema:\n"
-            f"{schema}\n"
-            "priority must be one of: low, medium, high, critical. "
-            "sentiment: positive, neutral, negative, frustrated."
+        return format_vertical_prompt(
+            task_instructions="You are a senior customer support lead. Triage this ticket.",
+            fields={
+                "Customer tier": str(data.get("customer_tier", "standard")),
+                "Subject": str(data["ticket_subject"]),
+                "Ticket body": str(data["body"]),
+            },
+            output_schema_json=schema,
+            reference_text=reference_text,
+            closing_instructions=(
+                "priority must be one of: low, medium, high, critical. "
+                "sentiment: positive, neutral, negative, frustrated."
+            ),
         )

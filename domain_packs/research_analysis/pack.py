@@ -245,7 +245,10 @@ class ResearchAnalysisPack(BaseDomainPack):
                         checkpointer=self._checkpointer,
                         budget_usd=self._budget_usd,
                     )
-                result: ResearchResult = self._research_agent.run_structured(query)
+                research_agent = self._research_agent
+                if research_agent is None:
+                    raise AgentExecutionError("Research agent failed to initialize")
+                result: ResearchResult = research_agent.run_structured(query)
                 if self._connector is not None:
                     connector_result = self._fetch_connector_result(query)
                     result = self._merge_connector_into_result(result, connector_result)
@@ -327,9 +330,10 @@ class ResearchAnalysisPack(BaseDomainPack):
                         checkpointer=self._checkpointer,
                         budget_usd=self._budget_usd,
                     )
-                report: AnalysisReport = self._analyst_agent.run_structured(
-                    research_result
-                )
+                analyst_agent = self._analyst_agent
+                if analyst_agent is None:
+                    raise AgentExecutionError("Analyst agent failed to initialize")
+                report: AnalysisReport = analyst_agent.run_structured(research_result)
                 logger.info(
                     "Pipeline: analysis phase complete",
                     extra={

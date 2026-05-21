@@ -33,8 +33,11 @@ from connectors.base import BaseConnector, ConnectorRequest, ConnectorResult
 from core.config import get_settings
 from core.memory import create_checkpointer
 from core.observability import trace_span
+from core.security import InputValidator
 
 logger = logging.getLogger(__name__)
+
+_CONNECTOR_SNIPPET_VALIDATOR = InputValidator(max_length=100_000)
 
 
 class _StructuredState(TypedDict, total=False):
@@ -117,6 +120,15 @@ class StructuredLLMPack(BaseDomainPack):
         return graph.compile(checkpointer=self._checkpointer)
 
     @classmethod
+    def _coerce_input(cls, inp: BaseModel) -> BaseModel:
+        """Return a validated instance of ``input_schema`` (no ``assert``)."""
+        if isinstance(inp, cls.input_schema):
+            return inp
+        return cls.input_schema.model_validate(
+            inp.model_dump() if isinstance(inp, BaseModel) else inp
+        )
+
+    @classmethod
     def build_prompt(cls, inp: BaseModel, *, reference_text: str = "") -> str:
         """Build the LLM prompt from validated input and optional reference text."""
         raise NotImplementedError
@@ -171,7 +183,19 @@ class StructuredLLMPack(BaseDomainPack):
                         or record.get("content")
                         or str(record)
                     )
-                    parts.append(str(snippet))
+                    text = str(snippet)
+                    try:
+                        _CONNECTOR_SNIPPET_VALIDATOR.check_content_safety(
+                            text, max_length=100_000
+                        )
+                    except ValueError:
+                        logger.warning(
+                            "Skipping connector snippet with disallowed content "
+                            "for pack %s",
+                            self.pack_id,
+                        )
+                        continue
+                    parts.append(text)
             except Exception as exc:
                 logger.warning("Connector fetch failed for %s: %s", self.pack_id, exc)
         return "\n\n---\n\n".join(parts)
