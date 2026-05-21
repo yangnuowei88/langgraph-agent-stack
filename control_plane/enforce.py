@@ -4,6 +4,8 @@ control_plane/enforce.py — Apply registered pack policies at API boundaries.
 
 from __future__ import annotations
 
+from typing import Any
+
 from control_plane.registry import PolicyRegistry
 from core.config import Settings
 from core.security import InputValidator
@@ -45,3 +47,44 @@ def validate_query_for_pack(
             f"Query exceeds maximum length of {max_chars} characters for pack {pack_id!r}."
         )
     return validator.validate(query)
+
+
+def validate_pack_body(
+    body: Any,
+    pack_id: str,
+    validator: InputValidator,
+) -> None:
+    """Run content-safety checks on every string field in a typed pack request body.
+
+    Pydantic enforces field ``max_length`` at parse time; this applies the same
+    dangerous-pattern rules as ``InputValidator`` to document-sized fields
+    (``contract_text``, ``rfp_text``, ``resume_text``, etc.) that are not used
+    as the pack primary query label.
+    """
+    from pydantic import BaseModel
+
+    if not isinstance(body, BaseModel):
+        return
+
+    model_cls = type(body)
+    policy = PolicyRegistry.get(pack_id)
+    fallback_max = (
+        policy.constraints.max_query_chars
+        if policy and policy.constraints.max_query_chars is not None
+        else validator.max_length
+    )
+    schema_props = model_cls.model_json_schema().get("properties", {})
+
+    def _check_string(field_name: str, value: str) -> None:
+        field_schema = schema_props.get(field_name, {})
+        field_max = field_schema.get("maxLength")
+        cap = int(field_max) if field_max is not None else fallback_max
+        validator.check_content_safety(value, max_length=cap)
+
+    for name, value in body.model_dump().items():
+        if isinstance(value, str) and value:
+            _check_string(name, value)
+        elif isinstance(value, list):
+            for item in value:
+                if isinstance(item, str) and item:
+                    validator.check_content_safety(item, max_length=fallback_max)

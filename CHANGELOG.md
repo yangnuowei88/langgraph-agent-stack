@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `api/main.py` — injects shared connector into any pack whose `__init__` accepts `connector=` (not only `research_analysis`).
 - `control_plane/__init__.py` — policy table covers all registered packs.
 
+### Security
+- **`validate_pack_body`** — scans every string field on typed pack requests for injection/SSRF patterns (closes gap where only the primary `query`/`text` label was validated).
+- **`InputValidator.check_content_safety`** — per-field length + pattern checks for document-sized inputs.
+- **Bandit CI scope** extended to `platform/`, `domain_packs/`, `connectors/`, `control_plane/`.
+- **LLM JSON cap** — `StructuredLLMPack` rejects parsed responses over 512 KiB.
+
 ## [0.5.0] - 2026-05-19
 
 ### Added

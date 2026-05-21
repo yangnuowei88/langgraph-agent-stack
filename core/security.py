@@ -133,15 +133,31 @@ class InputValidator:
                 f"(received {len(query)} characters)."
             )
 
+        return self.check_content_safety(query, max_length=self.max_length)
+
+    def check_content_safety(self, text: str, *, max_length: int | None = None) -> str:
+        """Reject dangerous patterns; enforce ``max_length`` when provided.
+
+        Used for per-field validation on typed pack bodies where each field may
+        have a different Pydantic ``max_length`` than the global query cap.
+        """
+        if not isinstance(text, str):
+            raise ValueError("Input must be a string.")
+
+        limit = self.max_length if max_length is None else max_length
+        if limit is not None and len(text) > limit:
+            raise ValueError(
+                f"Input exceeds maximum length of {limit} characters "
+                f"(received {len(text)} characters)."
+            )
+
         for pattern in _DANGEROUS_PATTERNS:
-            if pattern.search(query):
-                # Do not echo the matched content back to the caller.
+            if pattern.search(text):
                 raise ValueError(
                     "Query contains disallowed content and cannot be processed."
                 )
 
-        # Sanitise: strip surrounding whitespace, collapse excessive newlines
-        sanitised = query.strip()
+        sanitised = text.strip()
         sanitised = re.sub(r"\n{3,}", "\n\n", sanitised)
         return sanitised
 

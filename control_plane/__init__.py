@@ -8,6 +8,7 @@ via ``control_plane.enforce`` at request boundaries.
 from control_plane.enforce import (
     effective_budget_usd,
     effective_stream_timeout_seconds,
+    validate_pack_body,
     validate_query_for_pack,
 )
 from control_plane.policies import ExecutionConstraints, PackPolicy
@@ -92,5 +93,6 @@ __all__ = [
     "PolicyRegistry",
     "effective_budget_usd",
     "effective_stream_timeout_seconds",
+    "validate_pack_body",
     "validate_query_for_pack",
 ]

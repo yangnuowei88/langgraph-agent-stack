@@ -64,7 +64,19 @@ observability = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["agents", "core", "api", "connectors", "control_plane"]
+packages = [
+    "agents",
+    "core",
+    "api",
+    "connectors",
+    "control_plane",
+    "platform",
+    "domain_packs",
+]
+
+[tool.bandit]
+exclude_dirs = [".venv", "tests"]
+skips = ["B101"]
 
 [dependency-groups]
 dev = [
@@ -107,7 +119,7 @@ env = [
 [tool.pyright]
 typeCheckingMode = "basic"
 pythonVersion = "3.12"
-include = ["agents", "core", "api"]
+include = ["agents", "core", "api", "platform", "control_plane", "connectors"]
 exclude = ["tests", ".venv"]
 reportMissingImports = "warning"
 reportTypedDictNotRequiredAccess = false

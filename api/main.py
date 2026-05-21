@@ -77,6 +77,7 @@ from api.models import (
 from control_plane.enforce import (
     effective_budget_usd,
     effective_stream_timeout_seconds,
+    validate_pack_body,
     validate_query_for_pack,
 )
 from core.config import Settings, get_settings
@@ -354,11 +355,31 @@ def get_shared_memory() -> Any:
 
 def _pack_primary_text(body: Any) -> str:
     """Extract the main free-text field from a typed pack request body."""
-    if hasattr(body, "query"):
-        return str(body.query)
-    if hasattr(body, "text"):
-        return str(body.text)
-    return str(body)
+    for field in (
+        "query",
+        "text",
+        "company",
+        "topic",
+        "ticket_subject",
+        "question",
+        "role_title",
+    ):
+        if hasattr(body, field):
+            value = getattr(body, field)
+            if value:
+                return str(value)
+    return str(body)[:500]
+
+
+def _validate_pack_body_fields(pack_id: str, body: Any) -> None:
+    """Content-safety scan on all string fields (documents, tickets, resumes, etc.)."""
+    try:
+        validate_pack_body(body, pack_id, _input_validator)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
 
 
 def _pack_has_structured_input(pack_cls: type) -> bool:
@@ -594,6 +615,7 @@ def _build_pack_router(
         )
         response.headers["X-Pack-Version-Used"] = used_version
 
+        _validate_pack_body_fields(pack_id, body)
         raw_query = _pack_primary_text(body)
         try:
             query = _validate_pack_query(pack_id, raw_query)
@@ -693,6 +715,7 @@ def _build_pack_router(
             "unknown",
         )
 
+        _validate_pack_body_fields(pack_id, body)
         raw_query = _pack_primary_text(body)
         try:
             _validate_pack_query(pack_id, raw_query)

@@ -179,7 +179,7 @@ jobs:
             --severity-level medium \
             --confidence-level medium \
             --exclude ".venv,tests" \
-            api/ core/ agents/
+            api/ core/ agents/ platform/ domain_packs/ connectors/ control_plane/
         continue-on-error: true   # Always upload results even when findings exist
 
       - name: Run bandit (human-readable summary for log output)
@@ -190,7 +190,7 @@ jobs:
             --severity-level medium \
             --confidence-level medium \
             --exclude ".venv,tests" \
-            api/ core/ agents/
+            api/ core/ agents/ platform/ domain_packs/ connectors/ control_plane/
         continue-on-error: true
 
       - name: Upload bandit SARIF to GitHub Security tab
@@ -219,7 +219,7 @@ jobs:
             --severity-level high \
             --confidence-level high \
             --exclude ".venv,tests" \
-            api/ core/ agents/
+            api/ core/ agents/ platform/ domain_packs/ connectors/ control_plane/
 
 # ---------------------------------------------------------------------------
 # Job 4 — Container image vulnerability scan with Trivy

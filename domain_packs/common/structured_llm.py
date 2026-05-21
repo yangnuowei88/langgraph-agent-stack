@@ -64,8 +64,14 @@ def _fetch_connector_result_sync(
         return future.result()
 
 
+# Maximum raw JSON blob size accepted from LLM responses (512 KiB).
+_MAX_JSON_RESPONSE_BYTES = 512 * 1024
+
+
 def extract_json_object(raw: str) -> dict[str, Any]:
     """Parse a JSON object from an LLM response (handles fenced blocks)."""
+    if len(raw.encode("utf-8")) > _MAX_JSON_RESPONSE_BYTES:
+        raise ValueError("LLM JSON response exceeds maximum allowed size.")
     text = raw.strip()
     fence = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
     if fence:
