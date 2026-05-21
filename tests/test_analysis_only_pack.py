@@ -5,8 +5,8 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 from agents.models import AnalysisReport
-from domain_packs.analysis_only.pack import AnalysisOnlyPack
-from domain_packs.analysis_only.schemas import AnalysisOnlyInput, AnalysisOnlyOutput
+from domain_packs.research.analysis_only.pack import AnalysisOnlyPack
+from domain_packs.research.analysis_only.schemas import AnalysisOnlyInput, AnalysisOnlyOutput
 
 
 def test_analysis_only_run_from_input_returns_analysis_report() -> None:

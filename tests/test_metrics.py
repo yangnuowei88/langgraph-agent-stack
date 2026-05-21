@@ -50,9 +50,9 @@ def test_metrics_exempt_from_auth() -> None:
     mock_checkpointer = MagicMock()
 
     with (
-        patch("api.main._rate_limiter", permissive),
-        patch("api.main.get_shared_llm", return_value=mock_llm),
-        patch("api.main.get_shared_checkpointer", return_value=mock_checkpointer),
+        patch("api.state.rate_limiter", permissive),
+        patch("api.state.get_shared_llm", return_value=mock_llm),
+        patch("api.state.get_shared_checkpointer", return_value=mock_checkpointer),
         patch.dict(os.environ, {"API_KEY": "test-secret-key-12345"}),
     ):
         from api.main import app
@@ -150,9 +150,9 @@ def test_hsts_present_in_production() -> None:
     get_settings.cache_clear()
     try:
         with (
-            patch("api.main._rate_limiter", permissive),
-            patch("api.main.get_shared_llm", return_value=mock_llm),
-            patch("api.main.get_shared_checkpointer", return_value=mock_checkpointer),
+            patch("api.state.rate_limiter", permissive),
+            patch("api.state.get_shared_llm", return_value=mock_llm),
+            patch("api.state.get_shared_checkpointer", return_value=mock_checkpointer),
         ):
             from api.main import app
 

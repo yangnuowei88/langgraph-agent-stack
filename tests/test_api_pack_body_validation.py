@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from domain_packs.contract_reviewer.pack import ContractReviewerPack
+from domain_packs.legal.contract_reviewer.pack import ContractReviewerPack
 
 
 def test_pack_run_rejects_null_byte_in_document_field(

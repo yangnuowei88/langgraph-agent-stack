@@ -16,7 +16,7 @@ from agents.analyst import AnalysisReport
 from agents.base_agent import AgentExecutionError, AgentValidationError
 from agents.researcher import ResearchResult
 from core.graph import MultiAgentGraph
-from domain_packs.research_analysis.pack import ResearchAnalysisPack
+from domain_packs.research.research_analysis.pack import ResearchAnalysisPack
 
 # ---------------------------------------------------------------------------
 # Fixtures

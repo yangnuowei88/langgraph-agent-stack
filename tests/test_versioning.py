@@ -73,10 +73,10 @@ def test_run_history_records_pack_version() -> None:
     # After startup, patch _shared_memory and PackRegistry.get so the request
     # uses our mock pack instance and mock memory.
     with (
-        patch("api.main._rate_limiter", permissive),
-        patch("api.main.get_shared_llm", return_value=mock_llm),
-        patch("api.main.get_shared_checkpointer", return_value=mock_checkpointer),
-        patch("api.main.create_run_history", return_value=mock_memory),
+        patch("api.state.rate_limiter", permissive),
+        patch("api.state.get_shared_llm", return_value=mock_llm),
+        patch("api.state.get_shared_checkpointer", return_value=mock_checkpointer),
+        patch("api.lifespan.create_run_history", return_value=mock_memory),
     ):
         with TestClient(app, raise_server_exceptions=False) as client:
             # After lifespan startup, _shared_memory == mock_memory (set by create_run_history).

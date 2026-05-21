@@ -10,7 +10,8 @@ from typing import Any
 @contextmanager
 def override_legacy_pack_cls(mock_cls: type[Any]) -> Generator[None, None, None]:
     """Replace the FastAPI dependency that selects the legacy pipeline pack class."""
-    from api.main import app, get_legacy_pack_cls
+    from api.app import app
+    from api.dependencies import get_legacy_pack_cls
 
     app.dependency_overrides[get_legacy_pack_cls] = lambda: mock_cls
     try:
