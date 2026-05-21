@@ -333,10 +333,50 @@ def test_set_weights_partial_update_leaves_others_unchanged(clean_registry) -> N
 
     PackRegistry.set_weights("test_versioned_pack", {"2.0": 5.0})
 
-    versions = PackRegistry._registry["test_versioned_pack"]
+    versions = PackRegistry._get_versions("test_versioned_pack")
     by_version = {pv.version: pv.weight for pv in versions}
     assert by_version["1.0"] == pytest.approx(1.0), "v1 weight should be unchanged"
     assert by_version["2.0"] == pytest.approx(5.0), "v2 weight should be updated"
+
+
+def test_concurrent_get_and_set_weights(clean_registry) -> None:
+    """Concurrent get() and set_weights() must not raise or corrupt state."""
+    import threading
+
+    PackRegistry.register(_PackV1)
+    PackRegistry.register(_PackV2)
+    errors: list[BaseException] = []
+
+    def reader() -> None:
+        try:
+            for index in range(50):
+                PackRegistry.get("test_versioned_pack", affinity_key=f"client-{index}")
+        except BaseException as exc:  # pragma: no cover - failure path
+            errors.append(exc)
+
+    def writer() -> None:
+        try:
+            for index in range(50):
+                PackRegistry.set_weights(
+                    "test_versioned_pack",
+                    {"1.0": float(index % 5 + 1), "2.0": float(index % 3 + 1)},
+                )
+        except BaseException as exc:  # pragma: no cover - failure path
+            errors.append(exc)
+
+    threads = [
+        threading.Thread(target=reader),
+        threading.Thread(target=reader),
+        threading.Thread(target=writer),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert not errors
+    versions = PackRegistry._get_versions("test_versioned_pack")
+    assert all(pv.weight >= 0 for pv in versions)
 
 
 # ---------------------------------------------------------------------------

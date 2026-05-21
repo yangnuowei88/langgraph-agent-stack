@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import random
+import threading
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -78,10 +79,13 @@ class PackRegistry:
         instance = cls(run_id="abc", llm=llm, checkpointer=cp)
 
     All registration happens at startup in pack_kernel/__init__.py; the registry
-    is a class-level dict and is shared across the process lifetime.
+    is a class-level dict and is shared across the process lifetime.  A class
+    lock serialises reads and writes for safe concurrent ``get()`` /
+    ``set_weights()`` use (including free-threaded Python builds).
     """
 
     _registry: dict[str, list[PackVersion]] = {}
+    _lock: threading.Lock = threading.Lock()
 
     @classmethod
     def register(cls, pack_cls: type[BaseDomainPack]) -> None:
@@ -111,22 +115,23 @@ class PackRegistry:
         version = getattr(pack_cls, "version", "1.0")
         pv = PackVersion(version=version, pack_cls=pack_cls, weight=1.0)
 
-        if pack_id not in cls._registry:
-            cls._registry[pack_id] = [pv]
-        else:
-            versions = cls._registry[pack_id]
-            for i, existing in enumerate(versions):
-                if existing.version == version:
-                    logger.warning(
-                        "PackRegistry: replacing existing pack '%s' version '%s' "
-                        "with a new registration.",
-                        pack_id,
-                        version,
-                    )
-                    versions[i] = pv
-                    break
+        with cls._lock:
+            if pack_id not in cls._registry:
+                cls._registry[pack_id] = [pv]
             else:
-                versions.append(pv)
+                versions = cls._registry[pack_id]
+                for i, existing in enumerate(versions):
+                    if existing.version == version:
+                        logger.warning(
+                            "PackRegistry: replacing existing pack '%s' version '%s' "
+                            "with a new registration.",
+                            pack_id,
+                            version,
+                        )
+                        versions[i] = pv
+                        break
+                else:
+                    versions.append(pv)
 
     @classmethod
     def get(
@@ -151,32 +156,35 @@ class PackRegistry:
             KeyError: If pack_id is not registered.
             KeyError: If a specific version is requested but not found.
         """
-        if pack_id not in cls._registry:
-            available = list(cls._registry)
-            raise KeyError(
-                f"Pack '{pack_id}' is not registered. Available packs: {available}"
-            )
-        versions = cls._registry[pack_id]
+        with cls._lock:
+            if pack_id not in cls._registry:
+                available = list(cls._registry)
+                raise KeyError(
+                    f"Pack '{pack_id}' is not registered. Available packs: {available}"
+                )
+            versions = list(cls._registry[pack_id])
 
-        if version is not None:
-            for pv in versions:
-                if pv.version == version:
-                    return pv.pack_cls
-            available_versions = [pv.version for pv in versions]
-            raise KeyError(
-                f"Pack '{pack_id}' version '{version}' is not registered. "
-                f"Available versions: {available_versions}"
-            )
+            if version is not None:
+                for pv in versions:
+                    if pv.version == version:
+                        return pv.pack_cls
+                available_versions = [pv.version for pv in versions]
+                raise KeyError(
+                    f"Pack '{pack_id}' version '{version}' is not registered. "
+                    f"Available versions: {available_versions}"
+                )
 
-        if len(versions) == 1:
-            return versions[0].pack_cls
-        weights = [pv.weight for pv in versions]
-        if sum(weights) == 0.0:
-            raise KeyError(f"Pack '{pack_id}' has no versions with positive weight.")
-        selected = _select_weighted_pack_version(
-            versions, weights, affinity_key=affinity_key
-        )
-        return selected.pack_cls
+            if len(versions) == 1:
+                return versions[0].pack_cls
+            weights = [pv.weight for pv in versions]
+            if sum(weights) == 0.0:
+                raise KeyError(
+                    f"Pack '{pack_id}' has no versions with positive weight."
+                )
+            selected = _select_weighted_pack_version(
+                versions, weights, affinity_key=affinity_key
+            )
+            return selected.pack_cls
 
     @classmethod
     def set_weights(cls, pack_id: str, weights: dict[str, float]) -> None:
@@ -192,28 +200,29 @@ class PackRegistry:
             KeyError: If a version in weights is not registered for this pack_id.
             ValueError: If any weight value is negative.
         """
-        if pack_id not in cls._registry:
-            available = list(cls._registry)
-            raise KeyError(
-                f"Pack '{pack_id}' is not registered. Available packs: {available}"
-            )
-        registry_versions = cls._registry[pack_id]
-
-        for version, weight in weights.items():
-            if weight < 0:
-                raise ValueError(
-                    f"Weight must be >= 0, got {weight!r} for version '{version}'."
-                )
-            for pv in registry_versions:
-                if pv.version == version:
-                    pv.weight = weight
-                    break
-            else:
-                available_versions = [pv.version for pv in registry_versions]
+        with cls._lock:
+            if pack_id not in cls._registry:
+                available = list(cls._registry)
                 raise KeyError(
-                    f"Pack '{pack_id}' version '{version}' is not registered. "
-                    f"Available versions: {available_versions}"
+                    f"Pack '{pack_id}' is not registered. Available packs: {available}"
                 )
+            registry_versions = cls._registry[pack_id]
+
+            for version, weight in weights.items():
+                if weight < 0:
+                    raise ValueError(
+                        f"Weight must be >= 0, got {weight!r} for version '{version}'."
+                    )
+                for pv in registry_versions:
+                    if pv.version == version:
+                        pv.weight = weight
+                        break
+                else:
+                    available_versions = [pv.version for pv in registry_versions]
+                    raise KeyError(
+                        f"Pack '{pack_id}' version '{version}' is not registered. "
+                        f"Available versions: {available_versions}"
+                    )
 
     @classmethod
     def _get_versions(cls, pack_id: str) -> list[PackVersion]:
@@ -222,17 +231,19 @@ class PackRegistry:
         Raises:
             KeyError: If pack_id is not registered.
         """
-        if pack_id not in cls._registry:
-            available = list(cls._registry)
-            raise KeyError(
-                f"Pack '{pack_id}' is not registered. Available packs: {available}"
-            )
-        return list(cls._registry[pack_id])
+        with cls._lock:
+            if pack_id not in cls._registry:
+                available = list(cls._registry)
+                raise KeyError(
+                    f"Pack '{pack_id}' is not registered. Available packs: {available}"
+                )
+            return list(cls._registry[pack_id])
 
     @classmethod
     def list_packs(cls) -> list[str]:
         """Return a sorted list of all registered pack IDs."""
-        return sorted(cls._registry)
+        with cls._lock:
+            return sorted(cls._registry)
 
     @classmethod
     def get_schemas(cls, pack_id: str) -> tuple[type[BaseModel], type[BaseModel]]:
@@ -274,4 +285,5 @@ class PackRegistry:
     @classmethod
     def _reset(cls) -> None:
         """Clear the registry — for use in tests only."""
-        cls._registry.clear()
+        with cls._lock:
+            cls._registry.clear()
