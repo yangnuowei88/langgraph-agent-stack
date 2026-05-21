@@ -12,7 +12,8 @@ the most common attack vectors at the API layer and in structured logging:
 
 ``validate_outbound_url``
     SSRF guard for URLs passed to ``httpx`` (connector fetches).  Blocks
-    loopback, link-local, metadata, and private IP targets.
+    loopback, link-local, metadata, and private IP targets — including hostnames
+    whose DNS records resolve to those ranges.
 
 ``RateLimiter``
     In-memory sliding-window rate limiter keyed by client IP.  Designed to be
@@ -43,6 +44,7 @@ import hashlib
 import ipaddress
 import logging
 import re
+import socket
 import threading
 import time
 from collections import deque
@@ -165,6 +167,57 @@ class InputValidator:
         return sanitised
 
 
+def _is_blocked_outbound_ip(
+    addr: ipaddress.IPv4Address | ipaddress.IPv6Address,
+) -> bool:
+    """Return True when *addr* must not be used as an outbound fetch target."""
+    return (
+        addr.is_loopback
+        or addr.is_private
+        or addr.is_link_local
+        or addr.is_reserved
+        or addr.is_multicast
+        or addr.is_unspecified
+    )
+
+
+def _resolve_outbound_host_ips(
+    host: str,
+) -> tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, ...]:
+    """Resolve *host* to IP addresses for SSRF validation."""
+    try:
+        infos = socket.getaddrinfo(
+            host,
+            None,
+            family=socket.AF_UNSPEC,
+            type=socket.SOCK_STREAM,
+        )
+    except socket.gaierror as exc:
+        raise ValueError(
+            f"Outbound URL hostname could not be resolved: {host!r}"
+        ) from exc
+
+    addresses: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
+    seen: set[str] = set()
+    for info in infos:
+        sockaddr = info[4]
+        if not sockaddr:
+            continue
+        ip_str = sockaddr[0]
+        if ip_str in seen:
+            continue
+        seen.add(ip_str)
+        try:
+            addresses.append(ipaddress.ip_address(ip_str))
+        except ValueError:
+            continue
+
+    if not addresses:
+        raise ValueError(f"Outbound URL hostname could not be resolved: {host!r}")
+
+    return tuple(addresses)
+
+
 def validate_outbound_url(url: str) -> str:
     """Reject outbound HTTP(S) URLs that target internal or metadata endpoints.
 
@@ -195,18 +248,13 @@ def validate_outbound_url(url: str) -> str:
 
     bare = host_lower.strip("[]")
     try:
-        addr = ipaddress.ip_address(bare)
+        addresses = (ipaddress.ip_address(bare),)
     except ValueError:
-        return url
+        addresses = _resolve_outbound_host_ips(host_lower)
 
-    if (
-        addr.is_loopback
-        or addr.is_private
-        or addr.is_link_local
-        or addr.is_reserved
-        or addr.is_multicast
-    ):
-        raise ValueError(f"Outbound URL target not allowed: {host!r}")
+    for addr in addresses:
+        if _is_blocked_outbound_ip(addr):
+            raise ValueError(f"Outbound URL target not allowed: {host!r}")
 
     return url
 

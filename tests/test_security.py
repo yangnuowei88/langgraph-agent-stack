@@ -80,14 +80,39 @@ class TestInputValidator:
 # ---------------------------------------------------------------------------
 
 
+def _public_dns_getaddrinfo(
+    host: str,
+    port: object,
+    family: int = 0,
+    type: int = 0,
+    proto: int = 0,
+    flags: int = 0,
+) -> list[tuple[int, int, int, str, tuple[str, int]]]:
+    import socket
+
+    return [
+        (
+            socket.AF_INET,
+            socket.SOCK_STREAM,
+            socket.IPPROTO_TCP,
+            "",
+            ("93.184.216.34", 0),
+        )
+    ]
+
+
 class TestValidateOutboundUrl:
     """Tests for validate_outbound_url()."""
 
     def test_allows_public_https_url(self) -> None:
-        assert (
-            validate_outbound_url("https://api.example.com/search?q=test")
-            == "https://api.example.com/search?q=test"
-        )
+        with patch(
+            "core.security.socket.getaddrinfo",
+            side_effect=_public_dns_getaddrinfo,
+        ):
+            assert (
+                validate_outbound_url("https://api.example.com/search?q=test")
+                == "https://api.example.com/search?q=test"
+            )
 
     def test_blocks_localhost(self) -> None:
         with pytest.raises(ValueError, match="not allowed"):
@@ -104,6 +129,80 @@ class TestValidateOutboundUrl:
     def test_blocks_non_http_scheme(self) -> None:
         with pytest.raises(ValueError, match="scheme"):
             validate_outbound_url("file:///etc/passwd")
+
+    def test_blocks_hostname_resolving_to_metadata_ip(self) -> None:
+        import socket
+
+        def metadata_dns(
+            host: str,
+            port: object,
+            family: int = 0,
+            type: int = 0,
+            proto: int = 0,
+            flags: int = 0,
+        ) -> list[tuple[int, int, int, str, tuple[str, int]]]:
+            return [
+                (
+                    socket.AF_INET,
+                    socket.SOCK_STREAM,
+                    socket.IPPROTO_TCP,
+                    "",
+                    ("169.254.169.254", 0),
+                )
+            ]
+
+        with patch("core.security.socket.getaddrinfo", side_effect=metadata_dns):
+            with pytest.raises(ValueError, match="not allowed"):
+                validate_outbound_url("http://metadata.attacker.com/latest/meta-data/")
+
+    def test_blocks_hostname_with_any_private_resolution(self) -> None:
+        import socket
+
+        def mixed_dns(
+            host: str,
+            port: object,
+            family: int = 0,
+            type: int = 0,
+            proto: int = 0,
+            flags: int = 0,
+        ) -> list[tuple[int, int, int, str, tuple[str, int]]]:
+            return [
+                (
+                    socket.AF_INET,
+                    socket.SOCK_STREAM,
+                    socket.IPPROTO_TCP,
+                    "",
+                    ("93.184.216.34", 0),
+                ),
+                (
+                    socket.AF_INET,
+                    socket.SOCK_STREAM,
+                    socket.IPPROTO_TCP,
+                    "",
+                    ("10.0.0.5", 0),
+                ),
+            ]
+
+        with patch("core.security.socket.getaddrinfo", side_effect=mixed_dns):
+            with pytest.raises(ValueError, match="not allowed"):
+                validate_outbound_url("http://dual-stack.example/internal")
+
+    def test_blocks_unresolvable_hostname(self) -> None:
+        import socket
+
+        def fail_dns(
+            host: str,
+            port: object,
+            family: int = 0,
+            type: int = 0,
+            proto: int = 0,
+            flags: int = 0,
+        ) -> list[tuple[int, int, int, str, tuple[str, int]]]:
+            raise socket.gaierror("Name or service not known")
+
+        with patch("core.security.socket.getaddrinfo", side_effect=fail_dns):
+            with pytest.raises(ValueError, match="could not be resolved"):
+                validate_outbound_url("http://does-not-exist.example/search")
 
 
 # ---------------------------------------------------------------------------

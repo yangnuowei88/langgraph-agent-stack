@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import socket
 from unittest.mock import patch
 
 import httpx
@@ -12,6 +13,31 @@ from connectors.http_connector import (
     DEFAULT_HTTP_CONNECTOR_USER_AGENT,
     HttpConnector,
 )
+
+
+@pytest.fixture(autouse=True)
+def _mock_public_connector_dns(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Avoid live DNS during connector SSRF validation in unit tests."""
+
+    def fake_getaddrinfo(
+        host: str,
+        port: object,
+        family: int = 0,
+        type: int = 0,
+        proto: int = 0,
+        flags: int = 0,
+    ) -> list[tuple[int, int, int, str, tuple[str, int]]]:
+        return [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("93.184.216.34", 0),
+            )
+        ]
+
+    monkeypatch.setattr("core.security.socket.getaddrinfo", fake_getaddrinfo)
 
 
 @pytest.mark.asyncio

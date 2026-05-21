@@ -39,7 +39,13 @@ def test_create_connector_http_requires_url() -> None:
 
 def test_create_connector_http() -> None:
     settings = _settings_env(CONNECTOR_HTTP_URL="https://api.example.com/search")
-    connector = create_connector("http", settings)
+    with patch(
+        "core.security.socket.getaddrinfo",
+        return_value=[
+            (2, 1, 6, "", ("93.184.216.34", 0)),
+        ],
+    ):
+        connector = create_connector("http", settings)
     assert isinstance(connector, HttpConnector)
 
 
