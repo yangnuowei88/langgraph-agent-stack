@@ -5,9 +5,6 @@ from __future__ import annotations
 import httpx
 import pytest
 
-anthropic = pytest.importorskip("anthropic")
-openai = pytest.importorskip("openai")
-
 from agents.llm_retry import is_retryable_llm_error, retry_if_transient_llm_error
 
 
@@ -28,11 +25,13 @@ class TestIsRetryableLlmError:
         assert is_retryable_llm_error(httpx.ReadTimeout("read timed out"))
 
     def test_anthropic_rate_limit_type(self) -> None:
+        anthropic = pytest.importorskip("anthropic")
         assert is_retryable_llm_error(
             anthropic.RateLimitError.__new__(anthropic.RateLimitError)
         )
 
     def test_openai_rate_limit_type(self) -> None:
+        openai = pytest.importorskip("openai")
         assert is_retryable_llm_error(
             openai.RateLimitError.__new__(openai.RateLimitError)
         )
@@ -57,6 +56,7 @@ class TestIsRetryableLlmError:
         )
 
     def test_sdk_rate_limit_retried_by_predicate(self) -> None:
+        anthropic = pytest.importorskip("anthropic")
         assert retry_if_transient_llm_error(
             anthropic.RateLimitError.__new__(anthropic.RateLimitError)
         )
