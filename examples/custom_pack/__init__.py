@@ -1,6 +1,6 @@
-"""Backward-compat re-export — prefer domain_packs.summariser."""
+"""Exemple autonome d'auteur de pack — voir README.md."""
 
-from domain_packs.summariser.pack import SummariserPack
-from domain_packs.summariser.schemas import SummaryInput, SummaryOutput
+from examples.custom_pack.pack import EchoPack
+from examples.custom_pack.schemas import EchoInput, EchoOutput
 
-__all__ = ["SummariserPack", "SummaryInput", "SummaryOutput"]
+__all__ = ["EchoPack", "EchoInput", "EchoOutput"]
