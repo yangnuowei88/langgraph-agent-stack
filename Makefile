@@ -8,9 +8,9 @@ HELM_CHART   := infra/helm/langgraph-agent-stack
 # ─── Phony Targets ───────────────────────────────────────────────────────────
 
 .PHONY: help install run run-ollama \
-        test test-cov lint format check \
+        test test-cov lint format typecheck check check-security \
         docker-build docker-run docker-redis docker-down docker-smoke \
-        helm-lint helm-dev helm-prod helm-dry-run helm-uninstall \
+        helm-lint helm-dev helm-prod helm-dry-run helm-uninstall infra-check \
         tf-init tf-plan tf-apply tf-fmt \
         clean
 
@@ -37,18 +37,31 @@ run-ollama: ## Start the API server using Ollama as LLM provider
 test: ## Run the test suite with verbose output
 	$(UV) run pytest tests/ -v
 
-test-cov: ## Run tests with coverage report for agents, core and api
-	$(UV) run pytest tests/ --cov=agents --cov=core --cov=api --cov-report=term-missing
+test-cov: ## Run tests with coverage report (kernel, API, domain packs, connectors)
+	$(UV) run pytest tests/ \
+		--cov=agents --cov=core --cov=api \
+		--cov=pack_kernel --cov=domain_packs --cov=connectors --cov=control_plane \
+		--cov-report=term-missing
 
 lint: ## Check code style with ruff
 	$(UV) run ruff check .
 
-format: ## Format source code with black
-	$(UV) run black .
+format: ## Format source code with ruff
+	$(UV) run ruff format .
 
-check: ## Run linting and formatting checks without modifying files (CI mode)
-	$(UV) run ruff check --no-fix .
-	$(UV) run black --check .
+typecheck: ## Run pyright (CI typecheck job)
+	$(UV) run pyright
+
+check: ## Lint, format check, and typecheck (CI lint + typecheck jobs)
+	$(UV) run ruff check .
+	$(UV) run ruff format --check .
+	$(UV) run pyright
+
+check-security: ## Bandit + pip-audit gates (CI security.yml, no container scan)
+	$(UV) run bandit --recursive --format screen --severity-level high --confidence-level high --exclude .venv,tests api/ core/ agents/ pack_kernel/ domain_packs/ connectors/ control_plane/
+	$(UV) export --frozen --no-dev --extra anthropic --no-hashes -o .pip-audit-requirements.txt
+	$(UV) run pip-audit -r .pip-audit-requirements.txt --progress-spinner off
+	@rm -f .pip-audit-requirements.txt
 
 # ─── Docker ──────────────────────────────────────────────────────────────────
 
@@ -71,6 +84,9 @@ docker-smoke: ## Run Docker smoke test (build + /health + /docs + non-root)
 
 helm-lint: ## Lint the Helm chart for errors
 	helm lint $(HELM_CHART)
+
+infra-check: ## Helm/Terraform DevSecOps (checkov, kubeconform, kube-linter)
+	CHECKOV_CMD="uv tool run checkov" bash scripts/infra-devsecops.sh
 
 helm-dev: ## Deploy to the dev environment via Helm
 	helm upgrade --install langgraph $(HELM_CHART) \

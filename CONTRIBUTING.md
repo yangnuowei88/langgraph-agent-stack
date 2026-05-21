@@ -5,7 +5,7 @@ Thank you for taking the time to contribute. This guide covers everything you ne
 ## Prerequisites
 
 - Python 3.12 or later
-- [uv](https://docs.astral.sh/uv/getting-started/installation/) — the project's package manager
+- [uv](https://docs.astral.sh/uv/getting-started/installation/) **0.11.15+** (pinned in CI/Dockerfile — use the same major.minor for reproducible lockfiles)
 - Git
 
 Verify your setup:
@@ -73,7 +73,7 @@ The test suite covers API endpoints, memory backends, security primitives, agent
 
 ## Linting and Formatting
 
-The project uses [ruff](https://docs.astral.sh/ruff/) for linting and import sorting, and [black](https://black.readthedocs.io/) for formatting.
+The project uses [ruff](https://docs.astral.sh/ruff/) for linting, import sorting, and formatting.
 
 ```bash
 # Check for lint errors
@@ -83,13 +83,56 @@ uv run ruff check .
 uv run ruff check . --fix
 
 # Format code
-uv run black .
+uv run ruff format .
 
 # Check formatting without modifying files (CI mode)
-uv run black --check .
+uv run ruff format --check .
 ```
 
 Both checks run automatically in CI on every push and pull request. Your PR will not be merged if either check fails.
+
+## Type checking
+
+CI runs [pyright](https://github.com/microsoft/pyright) on every push and PR. Run it locally before pushing:
+
+```bash
+uv run pyright
+```
+
+## Pre-commit hooks
+
+Hooks mirror CI gates so a clean local commit does not fail in the pipeline. Install once after `uv sync`:
+
+```bash
+uv run pre-commit install
+```
+
+On each commit, pre-commit runs:
+
+| Hook | CI equivalent |
+|------|----------------|
+| gitleaks | `security.yml` → secrets-scan |
+| ruff + ruff-format | `ci.yml` → lint |
+| pyright | `ci.yml` → typecheck |
+| pytest (`-m "not integration"`) | `ci.yml` → test (unit subset) |
+| bandit (high) | `security.yml` → sast gate |
+| pip-audit | `security.yml` → dependency-audit (when `pyproject.toml` / `uv.lock` change) |
+
+Not in pre-commit (too slow or needs Docker): `docker-smoke`, integration tests, Trivy/Syft image scan, Helm/Terraform DevSecOps. Before opening a PR: `make check`, `make check-security`, `make docker-smoke` (app/Dockerfile), and `make infra-check` (changes under `infra/`).
+
+Manual full hook run:
+
+```bash
+uv run pre-commit run --all-files
+```
+
+Equivalent without pre-commit:
+
+```bash
+make check
+uv run pytest -m "not integration"
+make check-security
+```
 
 ## Code Style
 
@@ -147,11 +190,12 @@ Branch names must be lowercase with hyphens — no underscores, no uppercase.
 3. **Run the full check suite before pushing:**
 
    ```bash
-   uv run ruff check .
-   uv run black --check .
-   uv run pyright
-   uv run pytest
+   make check
+   uv run pytest -m "not integration"
+   make check-security
    ```
+
+   Or rely on installed hooks: `uv run pre-commit run --all-files`
 
 4. **Open a pull request** against `main`. Fill in the PR template:
    - What problem does this solve?

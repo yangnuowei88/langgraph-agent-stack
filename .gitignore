@@ -198,6 +198,10 @@ logs/
 *.temp
 .cache/
 
+# Infra DevSecOps local tool cache + rendered manifests (scripts/infra-devsecops.sh)
+.infra-render/
+.infra-tools/
+
 # Node (if any tooling is added)
 node_modules/
 

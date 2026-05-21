@@ -1,17 +1,72 @@
-# .pre-commit-config.yaml — pre-commit hooks for langgraph-agent-stack
+# .pre-commit-config.yaml — hooks aligned with CI (ci.yml + security.yml)
 #
-# Install:  pip install pre-commit && pre-commit install
-# Run all:  pre-commit run --all-files
+# Local parity:
+#   ruff check + ruff format   → CI job lint
+#   pyright                    → CI job typecheck
+#   pytest (unit only)         → CI job test (excludes -m integration)
+#   gitleaks                   → security.yml secrets-scan
+#   bandit (high)              → security.yml sast gate
+#   pip-audit                  → security.yml dependency-audit gate
+#
+# CI-only (slow / needs Docker): docker-smoke, integration, trivy, syft, helm, terraform
+#
+# Setup:  uv sync && uv run pre-commit install
+# Manual: uv run pre-commit run --all-files
 
 repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.2
+    rev: v0.15.8
     hooks:
       - id: ruff
         args: [--fix]
       - id: ruff-format
 
-  - repo: https://github.com/gitleaks/gitleaks
-    rev: v8.21.2
+  - repo: local
     hooks:
-      - id: gitleaks
+      - id: pyright
+        name: pyright
+        entry: uv run pyright
+        language: system
+        types: [python]
+        pass_filenames: false
+
+      - id: bandit
+        name: bandit (high)
+        entry: >
+          uv run bandit
+          --recursive
+          --format screen
+          --severity-level high
+          --confidence-level high
+          --exclude .venv,tests
+          api/ core/ agents/ pack_kernel/ domain_packs/ connectors/ control_plane/
+        language: system
+        pass_filenames: false
+        types: [python]
+
+      - id: pytest-unit
+        name: pytest (unit, no integration)
+        entry: >
+          bash -c
+          'uv sync --frozen --all-extras --quiet
+          && uv run pytest -m "not integration" --tb=short -q'
+        language: system
+        pass_filenames: false
+        types: [python]
+
+      - id: pip-audit
+        name: pip-audit (production deps)
+        entry: >
+          bash -c
+          'uv export --frozen --no-dev --extra anthropic --no-hashes
+          -o .pip-audit-requirements.txt
+          && uvx pip-audit -r .pip-audit-requirements.txt --progress-spinner off
+          ; rm -f .pip-audit-requirements.txt'
+        language: system
+        pass_filenames: false
+        files: ^(pyproject\.toml|uv\.lock)$

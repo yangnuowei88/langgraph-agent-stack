@@ -1,19 +1,64 @@
 # Dependabot — automated dependency update PRs
 # https://docs.github.com/en/code-security/dependabot/dependabot-version-updates
+#
+# Covers:
+#   - uv / pyproject.toml + uv.lock (grouped PRs)
+#   - GitHub Actions workflows (.github/workflows/)
+#   - Docker base images (infra/Dockerfile)
 
 version: 2
 updates:
-  - package-ecosystem: "pip"
-    directory: "/"
+  # ── Python (uv lockfile) ───────────────────────────────────────────────────
+  - package-ecosystem: uv
+    directory: /
     schedule:
-      interval: "weekly"
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: UTC
+    open-pull-requests-limit: 10
+    groups:
+      langchain-ecosystem:
+        patterns:
+          - langchain*
+          - langgraph*
+          - langsmith*
+      python-app:
+        patterns:
+          - "*"
+        exclude-patterns:
+          - langchain*
+          - langgraph*
+          - langsmith*
+      dev-dependencies:
+        dependency-type: development
+        patterns:
+          - "*"
+
+  # ── GitHub Actions ─────────────────────────────────────────────────────────
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: UTC
     open-pull-requests-limit: 5
     groups:
-      langchain:
-        patterns: ["langchain*", "langgraph*"]
+      github-actions:
+        patterns:
+          - "*"
 
-  - package-ecosystem: "github-actions"
-    directory: "/"
+  # ── Docker (python:3.12.x-slim builder + runtime stages) ─────────────────
+  - package-ecosystem: docker
+    directory: /infra
     schedule:
-      interval: "weekly"
-    open-pull-requests-limit: 5
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: UTC
+    open-pull-requests-limit: 3
+    groups:
+      docker-base-images:
+        patterns:
+          - "*"
