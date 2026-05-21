@@ -489,9 +489,18 @@ def _pack_runtime_kwargs(pack_cls: type) -> dict[str, Any]:
     return kwargs
 
 
-def get_legacy_pack_cls() -> type[Any]:
+def get_legacy_pack_cls(
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> type[Any]:
     """FastAPI dependency: pack class for legacy ``POST /run`` and ``POST /run/stream``."""
-    return _active_pack_cls or MultiAgentGraph
+    try:
+        return PackRegistry.get(
+            settings.default_pack_id,
+            affinity_key=_rate_limit_key(request),
+        )
+    except KeyError:
+        return _active_pack_cls or MultiAgentGraph
 
 
 # ---------------------------------------------------------------------------
@@ -597,7 +606,11 @@ def _build_pack_router(
                 )
 
         try:
-            pack_cls_to_use = PackRegistry.get(pack_id, version=requested_version)
+            pack_cls_to_use = PackRegistry.get(
+                pack_id,
+                version=requested_version,
+                affinity_key=_rate_limit_key(request),
+            )
         except KeyError as exc:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
@@ -698,8 +711,21 @@ def _build_pack_router(
         run_id = str(uuid.uuid4())
 
         requested_version = request.headers.get("X-Pack-Version") or None
+        if requested_version is None and _shared_memory is not None:
+            session_id_for_sticky = getattr(body, "session_id", None) or None
+            if session_id_for_sticky and hasattr(
+                _shared_memory, "get_pack_version_for_session"
+            ):
+                requested_version = _shared_memory.get_pack_version_for_session(
+                    session_id_for_sticky, pack_id
+                )
+
         try:
-            pack_cls_to_use = PackRegistry.get(pack_id, version=requested_version)
+            pack_cls_to_use = PackRegistry.get(
+                pack_id,
+                version=requested_version,
+                affinity_key=_rate_limit_key(request),
+            )
         except KeyError as exc:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)

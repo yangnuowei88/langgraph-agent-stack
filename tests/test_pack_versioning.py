@@ -205,16 +205,29 @@ def test_get_raises_for_unknown_pack(clean_registry) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_get_selects_from_multiple_versions(clean_registry) -> None:
-    """With two versions registered, repeated get() calls return both classes
-    (assuming equal weights, the probability of always picking the same one
-    over 100 calls is negligibly small)."""
+def test_get_selects_from_multiple_versions_without_affinity(clean_registry) -> None:
+    """Without affinity_key, weighted selection may return different versions."""
     PackRegistry.register(_PackV1)
     PackRegistry.register(_PackV2)
 
     results = {PackRegistry.get("test_versioned_pack") for _ in range(100)}
     assert _PackV1 in results
     assert _PackV2 in results
+
+
+def test_get_sticky_with_affinity_key(clean_registry) -> None:
+    """Same affinity_key must always resolve to the same pack version."""
+    PackRegistry.register(_PackV1)
+    PackRegistry.register(_PackV2)
+
+    first = PackRegistry.get("test_versioned_pack", affinity_key="client-a")
+    for _ in range(50):
+        assert (
+            PackRegistry.get("test_versioned_pack", affinity_key="client-a") is first
+        )
+
+    other = PackRegistry.get("test_versioned_pack", affinity_key="client-b")
+    assert PackRegistry.get("test_versioned_pack", affinity_key="client-b") is other
 
 
 def test_get_respects_zero_weight(clean_registry) -> None:
@@ -231,9 +244,8 @@ def test_get_respects_zero_weight(clean_registry) -> None:
         )
 
 
-def test_get_with_seeded_random_is_deterministic(clean_registry) -> None:
-    """With a fixed random seed and two equal-weight versions, get() is
-    deterministic."""
+def test_get_with_seeded_random_is_deterministic_without_affinity(clean_registry) -> None:
+    """Without affinity_key, a fixed random seed makes get() deterministic."""
     PackRegistry.register(_PackV1)
     PackRegistry.register(_PackV2)
 
@@ -278,7 +290,10 @@ def test_set_weights_updates_traffic_split(clean_registry) -> None:
     # Give v2 a much higher weight so it dominates
     PackRegistry.set_weights("test_versioned_pack", {"1.0": 0.01, "2.0": 100.0})
 
-    results = [PackRegistry.get("test_versioned_pack") for _ in range(100)]
+    results = [
+        PackRegistry.get("test_versioned_pack", affinity_key=f"probe-{i}")
+        for i in range(100)
+    ]
     v2_count = results.count(_PackV2)
     # With weights 0.01 vs 100.0 the probability of v2 on each draw is ~99.99%.
     # Getting fewer than 90 v2 results in 100 draws is astronomically unlikely.

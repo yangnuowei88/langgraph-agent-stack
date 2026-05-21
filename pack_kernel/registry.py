@@ -7,7 +7,9 @@ No dynamic loading, no auto-discovery, no magic.
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import random
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -37,6 +39,29 @@ class PackVersion:
     def __post_init__(self) -> None:
         if self.weight < 0:
             raise ValueError(f"PackVersion.weight must be >= 0, got {self.weight!r}")
+
+
+def _select_weighted_pack_version(
+    versions: list[PackVersion],
+    weights: list[float],
+    *,
+    affinity_key: str | None = None,
+) -> PackVersion:
+    """Pick one version using weights; sticky when ``affinity_key`` is set."""
+    if affinity_key:
+        digest = hashlib.sha256(affinity_key.encode()).hexdigest()
+        pick = int(digest[:8], 16) / 0xFFFFFFFF
+        total = sum(weights)
+        threshold = pick * total
+        cumulative = 0.0
+        for pack_version, weight in zip(versions, weights, strict=True):
+            cumulative += weight
+            if threshold <= cumulative:
+                return pack_version
+        return versions[-1]
+
+    (selected,) = random.choices(versions, weights=weights, k=1)  # nosec B311
+    return selected
 
 
 class PackRegistry:
@@ -104,7 +129,13 @@ class PackRegistry:
                 versions.append(pv)
 
     @classmethod
-    def get(cls, pack_id: str, version: str | None = None) -> type[BaseDomainPack]:
+    def get(
+        cls,
+        pack_id: str,
+        version: str | None = None,
+        *,
+        affinity_key: str | None = None,
+    ) -> type[BaseDomainPack]:
         """Return the pack class registered under pack_id.
 
         When ``version`` is provided the exact matching PackVersion is returned
@@ -112,7 +143,9 @@ class PackRegistry:
 
         When ``version`` is None and a single version is registered the class
         is returned directly.  When multiple versions are registered one is
-        selected via ``random.choices`` weighted by each ``PackVersion.weight``.
+        selected by weight.  With ``affinity_key`` (e.g. hashed Bearer token or
+        client IP), the same caller always gets the same version; otherwise
+        selection is random.
 
         Raises:
             KeyError: If pack_id is not registered.
@@ -140,9 +173,9 @@ class PackRegistry:
         weights = [pv.weight for pv in versions]
         if sum(weights) == 0.0:
             raise KeyError(f"Pack '{pack_id}' has no versions with positive weight.")
-        import random
-
-        (selected,) = random.choices(versions, weights=weights, k=1)  # nosec B311 - non-cryptographic traffic split
+        selected = _select_weighted_pack_version(
+            versions, weights, affinity_key=affinity_key
+        )
         return selected.pack_cls
 
     @classmethod
