@@ -260,20 +260,18 @@ def load_cost_table(path: Path | None = None) -> dict[str, ModelPricing]:
 
 
 _effective_table: dict[str, ModelPricing] | None = None
+_effective_table_path_key: str | None = None
 
 
 def _reset_effective_table() -> None:
     """Reset the cached effective cost table. For testing only."""
-    global _effective_table
+    global _effective_table, _effective_table_path_key
     _effective_table = None
+    _effective_table_path_key = None
 
 
-def _get_effective_table() -> dict[str, ModelPricing]:
-    """Return the cost table, lazily loading an override file if configured."""
-    global _effective_table
-    if _effective_table is not None:
-        return _effective_table
-
+def _resolve_cost_table_path() -> Path | None:
+    """Return the configured override path, if any."""
     override_path: Path | None = None
     try:
         from core.config import get_settings
@@ -287,8 +285,18 @@ def _get_effective_table() -> dict[str, ModelPricing]:
 
         env_path = os.environ.get("LLM_COST_TABLE_PATH", "")
         override_path = Path(env_path) if env_path else None
+    return override_path
 
-    _effective_table = load_cost_table(override_path)
+
+def _get_effective_table() -> dict[str, ModelPricing]:
+    """Return the cost table, lazily loading an override file if configured."""
+    global _effective_table, _effective_table_path_key
+    path_key = str(_resolve_cost_table_path() or "")
+    if _effective_table is not None and _effective_table_path_key == path_key:
+        return _effective_table
+
+    _effective_table_path_key = path_key
+    _effective_table = load_cost_table(_resolve_cost_table_path())
     return _effective_table
 
 
