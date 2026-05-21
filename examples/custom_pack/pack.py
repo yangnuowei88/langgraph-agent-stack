@@ -33,11 +33,7 @@ class EchoPack(BaseDomainPack):
 
     def run_from_input(self, body: BaseModel) -> EchoOutput:
         """Exécution typée — même contrat que les routes POST /packs/{id}/run."""
-        inp = (
-            body
-            if isinstance(body, EchoInput)
-            else EchoInput.model_validate(body)
-        )
+        inp = body if isinstance(body, EchoInput) else EchoInput.model_validate(body)
         words = inp.text.split()
         echoed = inp.text.strip().upper()
         return EchoOutput(

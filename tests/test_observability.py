@@ -173,7 +173,9 @@ class TestMetricsPathLabel:
 
         from core.observability import metrics_path_label
 
-        route = APIRoute(path="/packs/{pack_id}/run", endpoint=lambda: None, methods=["POST"])
+        route = APIRoute(
+            path="/packs/{pack_id}/run", endpoint=lambda: None, methods=["POST"]
+        )
         label = metrics_path_label({"route": route})
         assert label == "/packs/{pack_id}/run"
 

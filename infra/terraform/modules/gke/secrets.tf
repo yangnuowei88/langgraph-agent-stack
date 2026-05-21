@@ -104,7 +104,7 @@ resource "kubernetes_manifest" "cluster_secret_store" {
           auth = {
             workloadIdentity = {
               clusterLocation = var.region
-              clusterName       = var.cluster_name
+              clusterName     = var.cluster_name
               serviceAccountRef = {
                 name      = local.k8s_service_account_name
                 namespace = kubernetes_namespace_v1.langgraph.metadata[0].name

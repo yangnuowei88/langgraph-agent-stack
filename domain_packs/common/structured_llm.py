@@ -41,7 +41,11 @@ from domain_packs.common.output_guard import (
     cross_check_output_if_enabled,
     guard_llm_output,
 )
-from pack_kernel.base_pack import BaseDomainPack, normalize_pack_stream_event, pack_stream_event
+from pack_kernel.base_pack import (
+    BaseDomainPack,
+    normalize_pack_stream_event,
+    pack_stream_event,
+)
 
 logger = logging.getLogger(__name__)
 

@@ -39,7 +39,9 @@ class _PackV1(BaseDomainPack):
     async def arun(self, query: str) -> Any:
         return {"version": "1.0"}
 
-    async def _iter_stream_events(self, query: str) -> AsyncGenerator[dict[str, Any], None]:
+    async def _iter_stream_events(
+        self, query: str
+    ) -> AsyncGenerator[dict[str, Any], None]:
         yield {"type": "test", "version": "1.0"}
 
 
@@ -55,7 +57,9 @@ class _PackV2(BaseDomainPack):
     async def arun(self, query: str) -> Any:
         return {"version": "2.0"}
 
-    async def _iter_stream_events(self, query: str) -> AsyncGenerator[dict[str, Any], None]:
+    async def _iter_stream_events(
+        self, query: str
+    ) -> AsyncGenerator[dict[str, Any], None]:
         yield {"type": "test", "version": "2.0"}
 
 
@@ -73,7 +77,9 @@ class _PackV1Replacement(BaseDomainPack):
     async def arun(self, query: str) -> Any:
         return {"version": "1.0-replaced"}
 
-    async def _iter_stream_events(self, query: str) -> AsyncGenerator[dict[str, Any], None]:
+    async def _iter_stream_events(
+        self, query: str
+    ) -> AsyncGenerator[dict[str, Any], None]:
         yield {"type": "test", "version": "1.0-replaced"}
 
 
@@ -222,9 +228,7 @@ def test_get_sticky_with_affinity_key(clean_registry) -> None:
 
     first = PackRegistry.get("test_versioned_pack", affinity_key="client-a")
     for _ in range(50):
-        assert (
-            PackRegistry.get("test_versioned_pack", affinity_key="client-a") is first
-        )
+        assert PackRegistry.get("test_versioned_pack", affinity_key="client-a") is first
 
     other = PackRegistry.get("test_versioned_pack", affinity_key="client-b")
     assert PackRegistry.get("test_versioned_pack", affinity_key="client-b") is other
@@ -244,7 +248,9 @@ def test_get_respects_zero_weight(clean_registry) -> None:
         )
 
 
-def test_get_with_seeded_random_is_deterministic_without_affinity(clean_registry) -> None:
+def test_get_with_seeded_random_is_deterministic_without_affinity(
+    clean_registry,
+) -> None:
     """Without affinity_key, a fixed random seed makes get() deterministic."""
     PackRegistry.register(_PackV1)
     PackRegistry.register(_PackV2)

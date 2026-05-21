@@ -5,7 +5,6 @@ from __future__ import annotations
 import anthropic
 import httpx
 import openai
-import pytest
 
 from agents.llm_retry import is_retryable_llm_error, retry_if_transient_llm_error
 
@@ -27,10 +26,14 @@ class TestIsRetryableLlmError:
         assert is_retryable_llm_error(httpx.ReadTimeout("read timed out"))
 
     def test_anthropic_rate_limit_type(self) -> None:
-        assert is_retryable_llm_error(anthropic.RateLimitError.__new__(anthropic.RateLimitError))
+        assert is_retryable_llm_error(
+            anthropic.RateLimitError.__new__(anthropic.RateLimitError)
+        )
 
     def test_openai_rate_limit_type(self) -> None:
-        assert is_retryable_llm_error(openai.RateLimitError.__new__(openai.RateLimitError))
+        assert is_retryable_llm_error(
+            openai.RateLimitError.__new__(openai.RateLimitError)
+        )
 
     def test_transient_http_status_without_rate_string(self) -> None:
         """503 must retry even when the message is not English and has no '429'."""
@@ -47,7 +50,9 @@ class TestIsRetryableLlmError:
     def test_budget_excluded_from_retry_predicate(self) -> None:
         from core.cost import BudgetExceededError
 
-        assert not retry_if_transient_llm_error(BudgetExceededError(budget=1.0, actual=2.0))
+        assert not retry_if_transient_llm_error(
+            BudgetExceededError(budget=1.0, actual=2.0)
+        )
 
     def test_sdk_rate_limit_retried_by_predicate(self) -> None:
         assert retry_if_transient_llm_error(

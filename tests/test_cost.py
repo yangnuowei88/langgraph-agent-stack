@@ -160,7 +160,11 @@ def test_pre_call_budget_blocks_before_llm_end() -> None:
     serialized = {"kwargs": {"model": "gpt-4o", "max_tokens": 4096}}
     messages = [[type("M", (), {"content": "x" * 8000})()]]
     with pytest.raises(BudgetExceededError):
-        tracker.on_chat_model_start(serialized, messages, invocation_params={"model": "gpt-4o", "max_tokens": 4096})
+        tracker.on_chat_model_start(
+            serialized,
+            messages,
+            invocation_params={"model": "gpt-4o", "max_tokens": 4096},
+        )
 
 
 def test_estimate_worst_case_call_cost_uses_max_output() -> None:

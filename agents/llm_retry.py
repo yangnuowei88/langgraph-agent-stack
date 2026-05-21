@@ -117,7 +117,7 @@ def retry_if_transient_llm_error(exc: BaseException) -> bool:
     return is_retryable_llm_error(exc)
 
 
-def before_sleep_log_transient_error(logger: object) -> "Callable[..., None]":
+def before_sleep_log_transient_error(logger: object) -> Callable[..., None]:
     """Build a tenacity ``before_sleep`` callback that logs retry attempts."""
 
     def _before_sleep(retry_state: object) -> None:

@@ -68,7 +68,9 @@ def normalize_pack_stream_event(event: dict[str, Any]) -> dict[str, Any]:
         return event
     legacy_kind = event.get("event")
     if not isinstance(legacy_kind, str) or not legacy_kind:
-        raise ValueError(f"Stream event missing '{PACK_STREAM_EVENT_TYPE_KEY}' key: {event!r}")
+        raise ValueError(
+            f"Stream event missing '{PACK_STREAM_EVENT_TYPE_KEY}' key: {event!r}"
+        )
     data = event.get("data", {})
     if not isinstance(data, dict):
         return pack_stream_event(legacy_kind, data=data)

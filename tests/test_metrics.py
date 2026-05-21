@@ -75,7 +75,7 @@ def test_http_metrics_use_route_template_not_concrete_path(
     metrics = test_client.get("/metrics")
     assert metrics.status_code == 200
     body = metrics.text
-    assert f'path="/sessions/{{session_id}}/history"' in body
+    assert 'path="/sessions/{session_id}/history"' in body
     assert session_id not in body
 
 

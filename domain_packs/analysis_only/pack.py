@@ -31,7 +31,11 @@ from core.config import get_settings
 from core.memory import create_checkpointer
 from core.observability import trace_span
 from domain_packs.analysis_only.schemas import AnalysisOnlyInput, AnalysisOnlyOutput
-from pack_kernel.base_pack import BaseDomainPack, normalize_pack_stream_event, pack_stream_event
+from pack_kernel.base_pack import (
+    BaseDomainPack,
+    normalize_pack_stream_event,
+    pack_stream_event,
+)
 
 logger = logging.getLogger(__name__)
 

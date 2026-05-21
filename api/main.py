@@ -111,8 +111,8 @@ from core.security import (
 configure_logging(level=get_settings().log_level.value)
 logger = logging.getLogger(__name__)
 
-from pack_kernel.builtin_packs import register_builtin_packs  # noqa: E402
 from pack_kernel.base_pack import normalize_pack_stream_event  # noqa: E402
+from pack_kernel.builtin_packs import register_builtin_packs  # noqa: E402
 from pack_kernel.registry import PackRegistry  # noqa: E402
 
 register_builtin_packs()

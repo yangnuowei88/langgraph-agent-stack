@@ -24,7 +24,7 @@ import contextvars
 import importlib.util
 import logging
 import os
-from collections.abc import Generator
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from typing import Any
 
@@ -281,7 +281,7 @@ _HTTP_DURATION_BUCKETS = (0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.
 _LLM_DURATION_BUCKETS = (0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0)
 
 
-def metrics_path_label(scope: dict[str, Any]) -> str:
+def metrics_path_label(scope: Mapping[str, Any]) -> str:
     """Return the matched route template for Prometheus ``path`` labels.
 
     Uses the FastAPI/Starlette route pattern (e.g. ``/packs/{pack_id}/run``)
