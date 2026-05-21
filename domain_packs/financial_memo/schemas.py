@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class FinancialMemoInput(BaseModel):
@@ -13,6 +13,8 @@ class FinancialMemoInput(BaseModel):
 
 
 class FinancialMemoOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
     topic: str
     situation: str
     complications: list[str]

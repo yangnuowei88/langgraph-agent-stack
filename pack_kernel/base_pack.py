@@ -9,7 +9,7 @@ pack_id, name, and description are required metadata used by PackRegistry.
 from __future__ import annotations
 
 import abc
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncIterator
 from typing import Any, ClassVar
 
 from pydantic import BaseModel
@@ -83,8 +83,13 @@ class BaseDomainPack(abc.ABC):
         """Execute the pack pipeline asynchronously and return a structured result."""
 
     @abc.abstractmethod
-    async def stream_events(self, query: str) -> AsyncGenerator[dict[str, Any], None]:
-        """Stream pipeline execution events as dicts."""
+    def stream_events(self, query: str) -> AsyncIterator[dict[str, Any]]:
+        """Stream pipeline execution events as dicts.
+
+        Concrete packs implement this as an ``async def`` generator (with
+        ``yield``). The return annotation is ``AsyncIterator`` because callers
+        receive the async generator object directly (no ``await`` on the call).
+        """
 
     # ------------------------------------------------------------------
     # Cost tracking

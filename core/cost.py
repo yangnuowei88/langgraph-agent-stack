@@ -50,6 +50,7 @@ _log = logging.getLogger(__name__)
 # Prometheus counter (optional — exact pattern from core/observability.py)
 # ---------------------------------------------------------------------------
 
+pack_run_cost_usd_total: Any | None
 try:
     from prometheus_client import Counter
 
@@ -60,7 +61,7 @@ try:
     )
     _PROMETHEUS_AVAILABLE = True
 except ImportError:
-    pack_run_cost_usd_total = None  # type: ignore[assignment]
+    pack_run_cost_usd_total = None
     _PROMETHEUS_AVAILABLE = False
 
 

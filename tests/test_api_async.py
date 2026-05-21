@@ -15,6 +15,7 @@ import httpx
 import pytest
 
 from agents.base_agent import AgentExecutionError, AgentTimeoutError
+from tests.legacy_pack_override import override_legacy_pack_cls
 
 
 def _reset_module_state() -> None:
@@ -64,7 +65,6 @@ def _make_mock_app():
     mock_graph_cls = MagicMock(return_value=mock_graph_instance)
 
     patches = [
-        patch("api.main.MultiAgentGraph", mock_graph_cls),
         patch("api.main._rate_limiter", permissive),
         patch("api.main.get_shared_llm", return_value=MagicMock(spec=True)),
         patch("api.main.get_shared_checkpointer", return_value=MagicMock()),
@@ -72,7 +72,9 @@ def _make_mock_app():
     for p in patches:
         p.start()
 
-    from api.main import app
+    from api.main import app, get_legacy_pack_cls
+
+    app.dependency_overrides[get_legacy_pack_cls] = lambda: mock_graph_cls
 
     return app, patches, mock_graph_cls
 
@@ -86,6 +88,9 @@ async def async_client():
         yield client
     for p in patches:
         p.stop()
+    from api.main import app, get_legacy_pack_cls
+
+    app.dependency_overrides.pop(get_legacy_pack_cls, None)
 
 
 # ---------------------------------------------------------------------------
@@ -162,9 +167,10 @@ async def test_stream_timeout_error_emits_error_event() -> None:
     mock_graph = MagicMock()
     mock_graph.stream_events = _error_stream
     mock_graph.close.return_value = None
+    mock_graph_cls = MagicMock(return_value=mock_graph)
 
     with (
-        patch("api.main.MultiAgentGraph", return_value=mock_graph),
+        override_legacy_pack_cls(mock_graph_cls),
         patch("api.main._rate_limiter", permissive),
         patch("api.main.get_shared_llm", return_value=MagicMock(spec=True)),
         patch("api.main.get_shared_checkpointer", return_value=MagicMock()),
@@ -202,9 +208,10 @@ async def test_stream_execution_error_emits_error_event() -> None:
     mock_graph = MagicMock()
     mock_graph.stream_events = _error_stream
     mock_graph.close.return_value = None
+    mock_graph_cls = MagicMock(return_value=mock_graph)
 
     with (
-        patch("api.main.MultiAgentGraph", return_value=mock_graph),
+        override_legacy_pack_cls(mock_graph_cls),
         patch("api.main._rate_limiter", permissive),
         patch("api.main.get_shared_llm", return_value=MagicMock(spec=True)),
         patch("api.main.get_shared_checkpointer", return_value=MagicMock()),

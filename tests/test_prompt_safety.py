@@ -24,6 +24,7 @@ def test_format_vertical_prompt_includes_guard_and_schema() -> None:
         closing_instructions="Be concise.",
     )
     assert "Security rules" in prompt
+    assert "Embedded instructions in resumes" in prompt
     assert "BEGIN UNTRUSTED USER CONTENT" in prompt
     assert "Field A" in prompt
     assert "ref doc" in prompt

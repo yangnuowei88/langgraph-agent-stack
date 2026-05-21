@@ -121,7 +121,7 @@ class PackRegistry:
         if pack_id not in cls._registry:
             available = list(cls._registry)
             raise KeyError(
-                f"Pack '{pack_id}' is not registered. " f"Available packs: {available}"
+                f"Pack '{pack_id}' is not registered. Available packs: {available}"
             )
         versions = cls._registry[pack_id]
 
@@ -142,7 +142,7 @@ class PackRegistry:
             raise KeyError(f"Pack '{pack_id}' has no versions with positive weight.")
         import random
 
-        (selected,) = random.choices(versions, weights=weights, k=1)  # nosec B311
+        (selected,) = random.choices(versions, weights=weights, k=1)  # nosec B311 - non-cryptographic traffic split
         return selected.pack_cls
 
     @classmethod
@@ -162,7 +162,7 @@ class PackRegistry:
         if pack_id not in cls._registry:
             available = list(cls._registry)
             raise KeyError(
-                f"Pack '{pack_id}' is not registered. " f"Available packs: {available}"
+                f"Pack '{pack_id}' is not registered. Available packs: {available}"
             )
         registry_versions = cls._registry[pack_id]
 
@@ -192,7 +192,7 @@ class PackRegistry:
         if pack_id not in cls._registry:
             available = list(cls._registry)
             raise KeyError(
-                f"Pack '{pack_id}' is not registered. " f"Available packs: {available}"
+                f"Pack '{pack_id}' is not registered. Available packs: {available}"
             )
         return list(cls._registry[pack_id])
 
@@ -222,7 +222,7 @@ class PackRegistry:
             List of dicts with keys: pack_id, name, description,
             input_schema (JSON schema dict), output_schema (JSON schema dict).
         """
-        result = []
+        result: list[dict[str, Any]] = []
         for pack_id in cls.list_packs():
             pack_cls = cls.get(pack_id)
             result.append(

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import abc
 import logging
-import secrets
 import time
 import uuid
 from typing import Any, cast
@@ -24,8 +23,18 @@ from typing import Any, cast
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage
 from langchain_core.tools import BaseTool
+from tenacity import (
+    Retrying,
+    retry_if_exception,
+    stop_after_attempt,
+    wait_random_exponential,
+)
 from typing_extensions import TypedDict
 
+from agents.llm_retry import (
+    before_sleep_log_transient_error,
+    retry_if_transient_llm_error,
+)
 from core.config import get_settings
 from core.cost import BudgetExceededError, CostTracker
 from core.llm import get_llm
@@ -353,102 +362,89 @@ class BaseAgent(abc.ABC):
     ) -> Any:
         """Invoke the LLM with exponential-backoff retry on transient errors.
 
-        Retries on ``TimeoutError``, ``ConnectionError``, and generic
-        ``Exception`` subclasses that indicate rate limiting (status 429).
-        Non-transient errors are re-raised immediately.
+        Retries on typed SDK / HTTP exceptions (rate limits, timeouts, 5xx) via
+        tenacity — not string matching on error messages.
 
         Args:
             messages: LangChain message list to send.
-            max_retries: Maximum number of retry attempts.
-            base_delay: Initial delay in seconds before the first retry.
-            max_delay: Upper bound on the exponential delay.
+            max_retries: Maximum number of retry attempts after the first failure.
+            base_delay: Multiplier for exponential backoff (seconds).
+            max_delay: Upper bound on wait between attempts (seconds).
 
         Returns:
             The LLM response (``AIMessage``).
 
         Raises:
-            AgentExecutionError: When all retries are exhausted.
+            AgentExecutionError: When all retries are exhausted or error is fatal.
+            AgentBudgetExceededError: When the cost budget is exceeded.
         """
         settings = get_settings()
-        last_exc: Exception | None = None
-        for attempt in range(max_retries + 1):
+        max_attempts = max_retries + 1
+
+        def _invoke_once() -> Any:
             try:
                 t0 = time.monotonic()
                 result = self.llm.invoke(messages)
-                elapsed = time.monotonic() - t0
-                if llm_request_duration_seconds is not None:
-                    llm_request_duration_seconds.labels(
-                        provider=settings.llm_provider,
-                    ).observe(elapsed)
-                if llm_requests_total is not None:
-                    llm_requests_total.labels(
-                        provider=settings.llm_provider, status="success"
-                    ).inc()
-                usage = getattr(result, "usage_metadata", None)
-                if usage and llm_tokens_total is not None:
-                    if "input_tokens" in usage:
-                        llm_tokens_total.labels(
-                            provider=settings.llm_provider, direction="input"
-                        ).inc(usage["input_tokens"])
-                    if "output_tokens" in usage:
-                        llm_tokens_total.labels(
-                            provider=settings.llm_provider, direction="output"
-                        ).inc(usage["output_tokens"])
-                return result
-            except (TimeoutError, ConnectionError) as exc:
-                if llm_requests_total is not None:
-                    llm_requests_total.labels(
-                        provider=settings.llm_provider, status="retryable_error"
-                    ).inc()
-                last_exc = exc
-                if attempt < max_retries:
-                    delay = min(base_delay * (2**attempt), max_delay) * (
-                        0.5 + secrets.SystemRandom().random()
-                    )
-                    self._log.warning(
-                        "LLM call failed (attempt %d/%d), retrying in %.1fs",
-                        attempt + 1,
-                        max_retries + 1,
-                        delay,
-                        extra={"error": str(exc)},
-                    )
-                    time.sleep(delay)
             except BudgetExceededError as exc:
                 raise AgentBudgetExceededError(str(exc)) from exc
             except Exception as exc:
-                err_str = str(exc).lower()
-                if "429" in err_str or "rate" in err_str:
+                if retry_if_transient_llm_error(exc):
                     if llm_requests_total is not None:
                         llm_requests_total.labels(
                             provider=settings.llm_provider,
                             status="retryable_error",
                         ).inc()
-                    last_exc = exc
-                    if attempt < max_retries:
-                        delay = min(base_delay * (2**attempt), max_delay) * (
-                            0.5 + secrets.SystemRandom().random()
-                        )
-                        self._log.warning(
-                            "LLM rate limited (attempt %d/%d), retrying in %.1fs",
-                            attempt + 1,
-                            max_retries + 1,
-                            delay,
-                            extra={"error": str(exc)},
-                        )
-                        time.sleep(delay)
-                    continue
+                    raise
                 if llm_requests_total is not None:
                     llm_requests_total.labels(
-                        provider=settings.llm_provider, status="fatal_error"
+                        provider=settings.llm_provider,
+                        status="fatal_error",
                     ).inc()
                 raise AgentExecutionError(
                     f"[{self.name}] LLM call failed: {exc}"
                 ) from exc
 
-        if llm_requests_total is not None:
-            llm_requests_total.labels(
-                provider=settings.llm_provider, status="fatal_error"
-            ).inc()
-        raise AgentExecutionError(
-            f"[{self.name}] LLM call failed after {max_retries + 1} attempts: {last_exc}"
-        ) from last_exc
+            elapsed = time.monotonic() - t0
+            if llm_request_duration_seconds is not None:
+                llm_request_duration_seconds.labels(
+                    provider=settings.llm_provider,
+                ).observe(elapsed)
+            if llm_requests_total is not None:
+                llm_requests_total.labels(
+                    provider=settings.llm_provider, status="success"
+                ).inc()
+            usage = getattr(result, "usage_metadata", None)
+            if usage and llm_tokens_total is not None:
+                if "input_tokens" in usage:
+                    llm_tokens_total.labels(
+                        provider=settings.llm_provider, direction="input"
+                    ).inc(usage["input_tokens"])
+                if "output_tokens" in usage:
+                    llm_tokens_total.labels(
+                        provider=settings.llm_provider, direction="output"
+                    ).inc(usage["output_tokens"])
+            return result
+
+        retryer = Retrying(
+            retry=retry_if_exception(retry_if_transient_llm_error),
+            stop=stop_after_attempt(max_attempts),
+            wait=wait_random_exponential(multiplier=base_delay, max=max_delay),
+            reraise=True,
+            before_sleep=before_sleep_log_transient_error(self._log),
+        )
+
+        try:
+            return retryer(_invoke_once)
+        except AgentBudgetExceededError:
+            raise
+        except AgentExecutionError:
+            raise
+        except Exception as exc:
+            if llm_requests_total is not None:
+                llm_requests_total.labels(
+                    provider=settings.llm_provider,
+                    status="fatal_error",
+                ).inc()
+            raise AgentExecutionError(
+                f"[{self.name}] LLM call failed after {max_attempts} attempts: {exc}"
+            ) from exc

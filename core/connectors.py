@@ -40,7 +40,12 @@ def create_connector(connector_id: str, settings: Settings) -> BaseConnector:
     if connector_id == "http":
         if not settings.connector_http_url:
             raise ValueError("CONNECTOR_HTTP_URL is required when CONNECTOR_ID=http")
-        return HttpConnector(base_url=settings.connector_http_url)
+        return HttpConnector(
+            base_url=settings.connector_http_url,
+            timeout_seconds=settings.connector_http_timeout_seconds,
+            max_response_bytes=settings.connector_http_max_response_bytes,
+            max_redirects=settings.connector_http_max_redirects,
+        )
 
     if connector_id == "rag":
         return RagConnector(settings=settings)

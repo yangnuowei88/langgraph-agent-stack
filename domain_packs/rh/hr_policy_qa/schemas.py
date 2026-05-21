@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class HrPolicyQaInput(BaseModel):
@@ -12,6 +12,8 @@ class HrPolicyQaInput(BaseModel):
 
 
 class HrPolicyQaOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
     question: str
     answer: str
     citations: list[str]

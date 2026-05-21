@@ -94,12 +94,12 @@ def test_run_history_records_pack_version() -> None:
                     json={"query": "What is quantum computing?"},
                 )
 
-    assert (
-        response.status_code == 200
-    ), f"Expected 200, got {response.status_code}: {response.text}"
-    assert (
-        mock_memory.save_run.called
-    ), "save_run must be called after a successful pack run"
+    assert response.status_code == 200, (
+        f"Expected 200, got {response.status_code}: {response.text}"
+    )
+    assert mock_memory.save_run.called, (
+        "save_run must be called after a successful pack run"
+    )
 
     call_kwargs = mock_memory.save_run.call_args
     # save_run is called with keyword args: run_id, query, result, metadata
@@ -152,9 +152,9 @@ def test_sticky_session_pins_version_on_second_call() -> None:
                 session_id_for_sticky, pack_id
             )
 
-    assert (
-        requested_version == "1.0"
-    ), f"Sticky version should be '1.0' but got {requested_version!r}"
+    assert requested_version == "1.0", (
+        f"Sticky version should be '1.0' but got {requested_version!r}"
+    )
     mock_memory.get_pack_version_for_session.assert_called_once_with(
         "sess-001", "research_analysis"
     )

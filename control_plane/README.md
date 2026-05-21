@@ -30,4 +30,5 @@ PolicyRegistry.register(
 
 - Dynamic policy DSL / OPA
 - Multi-tenant quotas
+- Per-tenant or named API keys (built-in auth is one shared `API_KEY`; see `docs/security.md`)
 - Automatic pack registration from policies (policies reference existing `pack_id` values only)

@@ -14,7 +14,7 @@ import logging
 import re
 import threading
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, ClassVar
 
@@ -33,7 +33,11 @@ from core.config import get_settings
 from core.memory import create_checkpointer
 from core.observability import trace_span
 from core.security import InputValidator
-from domain_packs.common.compliance import apply_compliance_output
+from domain_packs.common.compliance import REGULATED_PACK_IDS, apply_compliance_output
+from domain_packs.common.output_guard import (
+    cross_check_output_if_enabled,
+    guard_llm_output,
+)
 from pack_kernel.base_pack import BaseDomainPack
 
 logger = logging.getLogger(__name__)
@@ -136,12 +140,28 @@ class StructuredLLMPack(BaseDomainPack):
 
     @classmethod
     def parse_llm_output(
-        cls, raw: str, inp: BaseModel, *, reference_text: str = ""
+        cls,
+        raw: str,
+        inp: BaseModel,
+        *,
+        reference_text: str = "",
+        run_id: str | None = None,
+        llm: Any | None = None,
     ) -> BaseModel:
         """Parse LLM text into ``output_schema`` (default: JSON extraction)."""
         data = extract_json_object(raw)
+        data = guard_llm_output(cls.pack_id, raw, data, run_id=run_id)
         data = apply_compliance_output(cls.pack_id, data)
-        return cls.output_schema.model_validate(data)
+        strict = cls.pack_id in REGULATED_PACK_IDS
+        output = cls.output_schema.model_validate(data, strict=strict)
+        cross_check_output_if_enabled(
+            cls.pack_id,
+            task_summary=cls.primary_text(inp),
+            output_json=output.model_dump(),
+            llm=llm,
+            run_id=run_id,
+        )
+        return output
 
     @classmethod
     def primary_text(cls, inp: BaseModel) -> str:
@@ -192,7 +212,7 @@ class StructuredLLMPack(BaseDomainPack):
                         )
                     except ValueError:
                         logger.warning(
-                            "Skipping connector snippet with disallowed content "
+                            "Skipping connector snippet that failed validation "
                             "for pack %s",
                             self.pack_id,
                         )
@@ -221,7 +241,13 @@ class StructuredLLMPack(BaseDomainPack):
                 raw = (
                     response.content if hasattr(response, "content") else str(response)
                 )
-                output = self.parse_llm_output(raw, inp, reference_text=reference_text)
+                output = self.parse_llm_output(
+                    raw,
+                    inp,
+                    reference_text=reference_text,
+                    run_id=self.run_id,
+                    llm=self._llm,
+                )
                 return {
                     **state,
                     "output": output.model_dump(),
@@ -301,13 +327,13 @@ class StructuredLLMPack(BaseDomainPack):
 
     async def stream_events_from_input(
         self, body: BaseModel
-    ) -> AsyncGenerator[dict[str, Any], None]:
+    ) -> AsyncIterator[dict[str, Any]]:
         yield {"event": "phase_started", "data": {"phase": self.pack_id}}
         result = self.run_from_input(body)
         yield {"event": "phase_completed", "data": {"phase": self.pack_id}}
         yield {"event": "pipeline_completed", "data": {"result": result.model_dump()}}
 
-    async def stream_events(self, query: str) -> AsyncGenerator[dict[str, Any], None]:
+    async def stream_events(self, query: str) -> AsyncIterator[dict[str, Any]]:
         result = self.run(query)
         yield {"event": "phase_started", "data": {"phase": self.pack_id}}
         yield {"event": "phase_completed", "data": {"phase": self.pack_id}}

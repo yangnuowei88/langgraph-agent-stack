@@ -15,7 +15,7 @@ import asyncio
 import logging
 import threading
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Literal
 
@@ -465,7 +465,7 @@ class ResearchAnalysisPack(BaseDomainPack):
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self._get_executor(), self.run, query)
 
-    async def stream_events(self, query: str) -> AsyncGenerator[dict[str, Any], None]:
+    async def stream_events(self, query: str) -> AsyncIterator[dict[str, Any]]:
         """Stream pipeline execution events in real time."""
         if not query or not query.strip():
             raise AgentValidationError(

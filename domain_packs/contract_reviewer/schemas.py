@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ContractReviewerInput(BaseModel):
@@ -13,6 +13,8 @@ class ContractReviewerInput(BaseModel):
 
 
 class ContractReviewerOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
     query: str
     risk_score: float = Field(ge=0.0, le=1.0)
     flagged_clauses: list[str]

@@ -1,11 +1,10 @@
 """
-api/main.py — Production-ready FastAPI application for the LangGraph agent stack.
+api/main.py — FastAPI application for the LangGraph agent stack.
 
 Primary HTTP surface:
 
-* ``POST /run`` / ``POST /run/stream`` — Legacy routes; class from ``DEFAULT_PACK_ID``
-  via ``_legacy_pipeline_pack_cls()`` (registry + optional test patch on
-  ``MultiAgentGraph``).
+* ``POST /run`` / ``POST /run/stream`` — Legacy routes; pack class from
+  ``get_legacy_pack_cls()`` (``DEFAULT_PACK_ID`` registry default at startup).
 * ``POST /packs/{pack_id}/run`` (+ stream) — Typed routes built from ``PackRegistry``
   at lifespan (e.g. ``research_analysis``, ``research_only``).
 * ``GET /packs`` — Pack discovery (schemas, metadata).
@@ -102,6 +101,7 @@ from core.observability import (
 from core.security import (
     InputValidator,
     create_rate_limiter,
+    ensure_request_body_within_limit,
     rate_limit_client_key,
     resolve_client_ip,
 )
@@ -486,40 +486,8 @@ def _pack_runtime_kwargs(pack_cls: type) -> dict[str, Any]:
     return kwargs
 
 
-def _legacy_pipeline_pack_cls() -> Any:
-    """Return the pack class used by legacy ``POST /run`` and ``POST /run/stream``.
-
-    **Production path.** On startup the lifespan sets ``_active_pack_cls`` to
-    ``PackRegistry.get(settings.default_pack_id)``. That is the authoritative
-    default pack for this process. The import ``MultiAgentGraph`` from
-    ``core.graph`` is an alias of ``ResearchAnalysisPack``; when
-    ``DEFAULT_PACK_ID`` is ``research_analysis`` (the usual deployment),
-    ``_active_pack_cls`` and ``MultiAgentGraph`` are the **same class object**,
-    so the branch below is irrelevant and behaviour matches the registry only.
-
-    **Test path.** Tests replace ``api.main.MultiAgentGraph`` with a mock via
-    ``patch("api.main.MultiAgentGraph", ...)``. The name bound on this module
-    then **differs** from ``_active_pack_cls`` (still the real class set at
-    lifespan). We instantiate the patched object so requests exercise mocks and
-    never call the real graph.
-
-    **Edge case.** If ``DEFAULT_PACK_ID`` ever selects a pack whose class is not
-    the same object as ``MultiAgentGraph``, the module binding and
-    ``_active_pack_cls`` differ without a mock; this helper prefers the module
-    binding when those two differ. For explicit pack selection independent of
-    ``DEFAULT_PACK_ID``, use ``POST /packs/{pack_id}/run`` instead.
-
-    Returns:
-        A type (or test double) callable as ``cls(run_id=..., llm=..., checkpointer=...)``.
-    """
-    import sys as _sys
-
-    _mod = _sys.modules.get(__name__)
-    _bound_on_module = (
-        getattr(_mod, "MultiAgentGraph", None) if _mod is not None else None
-    )
-    if _bound_on_module is not None and _bound_on_module is not _active_pack_cls:
-        return _bound_on_module
+def get_legacy_pack_cls() -> type[Any]:
+    """FastAPI dependency: pack class for legacy ``POST /run`` and ``POST /run/stream``."""
     return _active_pack_cls or MultiAgentGraph
 
 
@@ -543,12 +511,12 @@ def _guard_not_shutting_down() -> None:
 
 
 def verify_api_key(request: Request) -> None:
-    """FastAPI dependency that validates the Bearer token when API_KEY is set.
+    """Validate the shared Bearer secret when ``API_KEY`` is set.
 
-    Returns None (not the token) so the caller only needs ``Depends(verify_api_key)``
-    without caring about the return value.  Auth is also enforced globally via the
-    ``auth_middleware``; this dependency makes the contract explicit in the OpenAPI
-    schema for pack routes.
+    One global secret for all callers (no scopes or per-tenant keys). Returns
+    ``None`` so callers use ``Depends(verify_api_key)`` only for side effect.
+    Also enforced globally via ``auth_middleware``; this dependency documents
+    the contract in OpenAPI for pack routes.
     """
     _api_key = get_settings().api_key
     if _api_key is None:
@@ -1068,6 +1036,39 @@ async def drain_middleware(request: Request, call_next: Any) -> Any:
 
 
 # ---------------------------------------------------------------------------
+# Request body size limit — reject oversized payloads before JSON parsing
+# ---------------------------------------------------------------------------
+
+
+@app.middleware("http")
+async def body_size_limit_middleware(request: Request, call_next: Any) -> Any:
+    """Reject HTTP bodies above ``MAX_REQUEST_BODY_BYTES`` with 413.
+
+    Checks ``Content-Length`` when present and performs a stream-bounded read
+    otherwise so chunked uploads cannot bypass the cap.
+    """
+    settings = get_settings()
+    bounded_request, error = await ensure_request_body_within_limit(
+        request,
+        settings.max_request_body_bytes,
+    )
+    if error is not None:
+        logger.warning(
+            "Request body too large",
+            extra={
+                "path": request.url.path,
+                "client": _request_client_ip(request),
+                "max_bytes": settings.max_request_body_bytes,
+            },
+        )
+        return JSONResponse(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            content={"detail": error},
+        )
+    return await call_next(bounded_request)
+
+
+# ---------------------------------------------------------------------------
 # Helper: run a blocking callable in the thread pool
 # ---------------------------------------------------------------------------
 
@@ -1223,6 +1224,7 @@ async def ready() -> dict[str, str]:
 async def run_pipeline(
     body: RunRequest,
     settings: Annotated[Settings, Depends(get_settings)],
+    pack_cls: Annotated[type[Any], Depends(get_legacy_pack_cls)],
 ) -> RunResponse:
     """
     Execute the complete multi-agent pipeline for a given query.
@@ -1253,10 +1255,6 @@ async def run_pipeline(
             unrecoverable error.
         504 Gateway Timeout: When the agent exceeds its configured step budget.
 
-    Note:
-        The pipeline class is resolved by :func:`_legacy_pipeline_pack_cls`
-        (registry default ``_active_pack_cls`` vs patched ``MultiAgentGraph`` on
-        this module — see that helper).
     """
     if _shutting_down.is_set():
         raise HTTPException(
@@ -1264,7 +1262,6 @@ async def run_pipeline(
             detail="Server is shutting down.",
         )
 
-    settings = get_settings()
     try:
         query = _validate_pack_query(settings.default_pack_id, body.query)
     except ValueError as exc:
@@ -1297,7 +1294,6 @@ async def run_pipeline(
     )
 
     def _execute() -> RunResponse:
-        pack_cls = _legacy_pipeline_pack_cls()
         with pack_cls(
             run_id=run_id,
             llm=_shared_llm,
@@ -1389,12 +1385,12 @@ async def _stream_pipeline(
     query: str,
     session_id: str,
     run_id: str,
+    pack_cls: type[Any],
 ) -> AsyncGenerator[str, None]:
     """Async generator that streams the pipeline execution as SSE events.
 
-    The pack class is the same as for ``POST /run`` — see
-    :func:`_legacy_pipeline_pack_cls`.  Streams via the resolved class's
-    ``stream_events()`` (typically ``ResearchAnalysisPack`` / ``MultiAgentGraph`` alias).
+    Streams via ``pack_cls``'s ``stream_events()`` (typically
+    ``ResearchAnalysisPack`` / ``MultiAgentGraph`` alias).
 
     Event types emitted:
 
@@ -1421,7 +1417,6 @@ async def _stream_pipeline(
         llm = get_shared_llm()
         checkpointer = get_shared_checkpointer()
 
-        pack_cls = _legacy_pipeline_pack_cls()
         pipeline = pack_cls(
             run_id=run_id,
             llm=llm,
@@ -1525,6 +1520,7 @@ async def run_stream(
     body: RunRequest,
     request: Request,
     settings: Annotated[Settings, Depends(get_settings)],
+    pack_cls: Annotated[type[Any], Depends(get_legacy_pack_cls)],
 ) -> StreamingResponse:
     """
     Execute the complete multi-agent pipeline and stream progress as SSE.
@@ -1534,9 +1530,8 @@ async def run_stream(
     1. ``ResearchAgent``  — expands the query and produces a ``ResearchResult``.
     2. ``AnalystAgent``   — consumes the research and produces an ``AnalysisReport``.
 
-    Events are streamed from the pack class returned by
-    :func:`_legacy_pipeline_pack_cls` (same rules as ``POST /run``), using that
-    class's ``stream_events()`` and LangGraph's ``astream_events`` API under the hood.
+    Events are streamed from ``pack_cls`` (same class as ``POST /run``), using
+    its ``stream_events()`` and LangGraph's ``astream_events`` API under the hood.
 
     SSE event types
     ---------------
@@ -1602,7 +1597,9 @@ async def run_stream(
     async def _guarded_stream() -> AsyncGenerator[str, None]:
         try:
             async with asyncio.timeout(stream_timeout):
-                async for event in _stream_pipeline(query, session_id, run_id):
+                async for event in _stream_pipeline(
+                    query, session_id, run_id, pack_cls
+                ):
                     yield event
         except TimeoutError:
             yield f"data: {json.dumps({'type': 'error', 'message': f'Stream timed out after {stream_timeout}s'})}\n\n"

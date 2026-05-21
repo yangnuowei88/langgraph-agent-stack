@@ -11,7 +11,7 @@ import asyncio
 import logging
 import threading
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
@@ -191,7 +191,7 @@ class AnalysisOnlyPack(BaseDomainPack):
 
     async def stream_events_from_input(
         self, body: BaseModel
-    ) -> AsyncGenerator[dict[str, Any], None]:
+    ) -> AsyncIterator[dict[str, Any]]:
         if not isinstance(body, AnalysisOnlyInput):
             body = AnalysisOnlyInput.model_validate(body)
         research = self._input_to_research(body)
@@ -228,7 +228,7 @@ class AnalysisOnlyPack(BaseDomainPack):
             )
         yield {"event": "pipeline_completed", "data": {"report": final_report}}
 
-    async def stream_events(self, query: str) -> AsyncGenerator[dict[str, Any], None]:
+    async def stream_events(self, query: str) -> AsyncIterator[dict[str, Any]]:
         inp = AnalysisOnlyInput(query=query, summary=query)
         async for event in self.stream_events_from_input(inp):
             yield event

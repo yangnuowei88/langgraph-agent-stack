@@ -26,6 +26,7 @@ from langchain_core.messages import AIMessage
 from langgraph.checkpoint.memory import MemorySaver
 
 from core.config import MemoryBackend
+from tests.legacy_pack_override import override_legacy_pack_cls
 
 pytestmark = pytest.mark.integration
 
@@ -209,7 +210,7 @@ class TestAPIEndToEnd:
         permissive_limiter = RateLimiter(max_requests=10_000, window_seconds=60.0)
 
         with (
-            patch("api.main.MultiAgentGraph", mock_graph_cls),
+            override_legacy_pack_cls(mock_graph_cls),
             patch("api.main._rate_limiter", permissive_limiter),
             patch("api.main.get_shared_llm", return_value=mock_llm),
             patch("api.main.get_shared_checkpointer", return_value=mock_checkpointer),

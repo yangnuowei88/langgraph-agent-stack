@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class JobDescriptionWriterInput(BaseModel):
@@ -14,6 +14,8 @@ class JobDescriptionWriterInput(BaseModel):
 
 
 class JobDescriptionWriterOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
     role_title: str
     jd_markdown: str
     competency_matrix: list[str]

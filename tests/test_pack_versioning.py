@@ -177,9 +177,9 @@ def test_register_same_pack_id_same_version_emits_warning(
     with caplog.at_level(logging.WARNING, logger="pack_kernel.registry"):
         PackRegistry.register(_PackV1Replacement)
 
-    assert any(
-        "replacing" in record.message.lower() for record in caplog.records
-    ), f"Expected a replacement warning, got: {[r.message for r in caplog.records]}"
+    assert any("replacing" in record.message.lower() for record in caplog.records), (
+        f"Expected a replacement warning, got: {[r.message for r in caplog.records]}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -226,9 +226,9 @@ def test_get_respects_zero_weight(clean_registry) -> None:
     # All 50 calls must return _PackV1 (weight=1.0), never _PackV2 (weight=0.0)
     for _ in range(50):
         result = PackRegistry.get("zero_weight_pack")
-        assert (
-            result is _PackV1
-        ), "Only _PackV1 should be returned when _PackV2 has weight=0"
+        assert result is _PackV1, (
+            "Only _PackV1 should be returned when _PackV2 has weight=0"
+        )
 
 
 def test_get_with_seeded_random_is_deterministic(clean_registry) -> None:

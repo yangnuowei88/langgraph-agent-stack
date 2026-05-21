@@ -251,7 +251,7 @@ class TestRetryLogic:
 
         with patch("agents.base_agent.get_llm", return_value=mock_llm):
             agent = ResearchAgent()
-            with patch("time.sleep"):
+            with patch("tenacity.nap.sleep"):
                 result = agent._invoke_llm_with_retry(
                     [HumanMessage(content="test")], max_retries=3
                 )
@@ -269,11 +269,32 @@ class TestRetryLogic:
 
         with patch("agents.base_agent.get_llm", return_value=mock_llm):
             agent = ResearchAgent()
-            with patch("time.sleep"):
+            with patch("tenacity.nap.sleep"):
                 with pytest.raises(AgentExecutionError, match="failed after"):
                     agent._invoke_llm_with_retry(
                         [HumanMessage(content="test")], max_retries=2
                     )
+
+    def test_invoke_llm_with_retry_on_typed_rate_limit(self) -> None:
+        """Typed SDK RateLimitError retries without '429' in the message."""
+        import anthropic
+
+        mock_llm = MagicMock()
+        mock_llm.bind_tools.return_value = mock_llm
+        mock_llm.invoke.side_effect = [
+            anthropic.RateLimitError.__new__(anthropic.RateLimitError),
+            _make_ai_message("Success"),
+        ]
+
+        with patch("agents.base_agent.get_llm", return_value=mock_llm):
+            agent = ResearchAgent()
+            with patch("tenacity.nap.sleep"):
+                result = agent._invoke_llm_with_retry(
+                    [HumanMessage(content="test")], max_retries=2, base_delay=0.01
+                )
+
+        assert result.content == "Success"
+        assert mock_llm.invoke.call_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -454,7 +475,7 @@ class TestRetryMetrics:
         with (
             patch("agents.base_agent.get_llm", return_value=mock_llm),
             patch("agents.base_agent.llm_requests_total", mock_counter),
-            patch("agents.base_agent.time.sleep"),
+            patch("tenacity.nap.sleep"),
         ):
             agent = ResearchAgent()
             result = agent._invoke_llm_with_retry(
@@ -488,7 +509,7 @@ class TestRetryMetrics:
         with (
             patch("agents.base_agent.get_llm", return_value=mock_llm),
             patch("agents.base_agent.llm_requests_total", mock_counter),
-            patch("agents.base_agent.time.sleep"),
+            patch("tenacity.nap.sleep"),
         ):
             agent = ResearchAgent()
             with pytest.raises(AgentExecutionError):

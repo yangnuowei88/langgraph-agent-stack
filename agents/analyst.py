@@ -133,7 +133,7 @@ class AnalystAgent(BaseAgent):
             f"Research query: {query}\n\n"
             f"Research summary:\n{summary}\n\n"
             f"Raw findings ({len(findings)} total, showing first 8):\n"
-            + "\n".join(f"[{i+1}] {f[:300]}" for i, f in enumerate(findings[:8]))
+            + "\n".join(f"[{i + 1}] {f[:300]}" for i, f in enumerate(findings[:8]))
             + "\n\nExtract the KEY INSIGHTS. Return JSON: "
             '{"insights": ["...", ...], "confidence": 0.0-1.0}'
         )

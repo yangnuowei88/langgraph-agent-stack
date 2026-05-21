@@ -12,7 +12,7 @@ import asyncio
 import logging
 import threading
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
@@ -170,7 +170,7 @@ class SummariserPack(BaseDomainPack):
 
     async def stream_events_from_input(
         self, body: BaseModel
-    ) -> AsyncGenerator[dict[str, Any], None]:
+    ) -> AsyncIterator[dict[str, Any]]:
         if not isinstance(body, SummaryInput):
             body = SummaryInput.model_validate(body)
         result = self.run_from_input(body)
@@ -178,7 +178,7 @@ class SummariserPack(BaseDomainPack):
         yield {"event": "phase_completed", "data": {"phase": "summarise"}}
         yield {"event": "pipeline_completed", "data": {"result": result.model_dump()}}
 
-    async def stream_events(self, query: str) -> AsyncGenerator[dict[str, Any], None]:
+    async def stream_events(self, query: str) -> AsyncIterator[dict[str, Any]]:
         inp = SummaryInput(text=query, bullet_count=3)
         async for event in self.stream_events_from_input(inp):
             yield event

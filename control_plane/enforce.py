@@ -54,12 +54,11 @@ def validate_pack_body(
     pack_id: str,
     validator: InputValidator,
 ) -> None:
-    """Run content-safety checks on every string field in a typed pack request body.
+    """Run length and null-byte checks on every string field in a typed pack body.
 
     Pydantic enforces field ``max_length`` at parse time; this applies the same
-    dangerous-pattern rules as ``InputValidator`` to document-sized fields
-    (``contract_text``, ``rfp_text``, ``resume_text``, etc.) that are not used
-    as the pack primary query label.
+    structural rules via ``InputValidator.check_content_safety`` on document-sized
+    fields (``contract_text``, ``rfp_text``, ``resume_text``, etc.).
     """
     from pydantic import BaseModel
 

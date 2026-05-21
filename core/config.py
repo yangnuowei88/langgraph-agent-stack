@@ -111,6 +111,15 @@ class Settings(BaseSettings):
         le=32768,
         description="Maximum tokens to generate per LLM call.",
     )
+    llm_request_timeout_seconds: float = Field(
+        default=120.0,
+        ge=1.0,
+        description=(
+            "Wall-clock timeout for a single synchronous LLM HTTP request. "
+            "Distinct from STREAM_TIMEOUT_SECONDS (whole SSE pipeline)."
+        ),
+        validation_alias="LLM_REQUEST_TIMEOUT_SECONDS",
+    )
 
     default_pack_id: str = Field(
         default="research_analysis",
@@ -176,6 +185,25 @@ class Settings(BaseSettings):
         validation_alias="CONNECTOR_HTTP_URL",
         description="Base URL for CONNECTOR_ID=http (query param ``q``, ``limit``).",
     )
+    connector_http_timeout_seconds: float = Field(
+        default=10.0,
+        ge=1.0,
+        validation_alias="CONNECTOR_HTTP_TIMEOUT_SECONDS",
+        description="HTTP client timeout for CONNECTOR_ID=http.",
+    )
+    connector_http_max_response_bytes: int = Field(
+        default=1_048_576,
+        ge=1024,
+        validation_alias="CONNECTOR_HTTP_MAX_RESPONSE_BYTES",
+        description="Max response body size for CONNECTOR_ID=http (bytes).",
+    )
+    connector_http_max_redirects: int = Field(
+        default=5,
+        ge=0,
+        le=20,
+        validation_alias="CONNECTOR_HTTP_MAX_REDIRECTS",
+        description="Max redirects for CONNECTOR_ID=http (each hop SSRF-validated).",
+    )
 
     # --- Logging ---
     log_level: LogLevel = Field(
@@ -229,6 +257,16 @@ class Settings(BaseSettings):
         description="Maximum wall-clock seconds allowed for a streaming SSE pipeline run.",
         validation_alias="STREAM_TIMEOUT_SECONDS",
     )
+    max_request_body_bytes: int = Field(
+        default=1_048_576,
+        ge=1024,
+        le=52_428_800,
+        description=(
+            "Maximum inbound HTTP request body size in bytes. "
+            "Enforced before JSON parsing."
+        ),
+        validation_alias="MAX_REQUEST_BODY_BYTES",
+    )
     thread_pool_max_workers: int = Field(
         default=8,
         ge=1,
@@ -256,9 +294,11 @@ class Settings(BaseSettings):
         default=None,
         validation_alias="API_KEY",
         description=(
-            "Optional Bearer token for API authentication. "
-            "When set, all requests except health/docs must include "
-            "'Authorization: Bearer <token>'. Leave empty to disable."
+            "Optional single shared Bearer secret for API authentication. "
+            "When set, all requests except health/docs/metrics must include "
+            "'Authorization: Bearer <token>'. Not multi-tenant: no rotation, "
+            "scopes, per-tenant keys, or caller audit — use OAuth/OIDC or "
+            "gateway auth for SaaS. Leave empty to disable (or when auth is upstream)."
         ),
     )
 
@@ -305,6 +345,7 @@ class Settings(BaseSettings):
             azure_openai_deployment=self.azure_openai_deployment,
             ollama_base_url=self.ollama_base_url,
             ollama_model=self.ollama_model,
+            request_timeout_seconds=self.llm_request_timeout_seconds,
         )
 
     @model_validator(mode="after")
@@ -338,7 +379,7 @@ class Settings(BaseSettings):
         """Ensure the Redis URL uses a recognised scheme."""
         if not (v.startswith("redis://") or v.startswith("rediss://")):
             raise ValueError(
-                "redis_url must start with 'redis://' or 'rediss://' — " f"got: {v!r}"
+                f"redis_url must start with 'redis://' or 'rediss://' — got: {v!r}"
             )
         return v
 

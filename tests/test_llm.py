@@ -265,3 +265,38 @@ class TestLLMConfigDefaults:
     def test_default_max_tokens(self) -> None:
         config = LLMConfig(provider="anthropic", anthropic_api_key="sk-ant-test123")
         assert config.max_tokens > 0
+
+    def test_default_request_timeout(self) -> None:
+        config = LLMConfig(provider="anthropic", anthropic_api_key="sk-ant-test123")
+        assert config.request_timeout_seconds == 120.0
+
+
+class TestGetLlmTimeoutPropagation:
+    def test_anthropic_receives_default_request_timeout(self) -> None:
+        mock_ctor = MagicMock(return_value=MagicMock())
+        with patch.dict(
+            "sys.modules",
+            {"langchain_anthropic": MagicMock(ChatAnthropic=mock_ctor)},
+        ):
+            config = LLMConfig(
+                provider="anthropic",
+                anthropic_api_key="sk-ant-test123",
+                request_timeout_seconds=90.0,
+            )
+            get_llm(config)
+        mock_ctor.assert_called_once()
+        assert mock_ctor.call_args.kwargs["default_request_timeout"] == 90.0
+
+    def test_openai_receives_request_timeout(self) -> None:
+        mock_ctor = MagicMock(return_value=MagicMock())
+        with patch.dict(
+            "sys.modules",
+            {"langchain_openai": MagicMock(ChatOpenAI=mock_ctor)},
+        ):
+            config = LLMConfig(
+                provider="openai",
+                openai_api_key="sk-openai-test",
+                request_timeout_seconds=75.0,
+            )
+            get_llm(config)
+        assert mock_ctor.call_args.kwargs["request_timeout"] == 75.0

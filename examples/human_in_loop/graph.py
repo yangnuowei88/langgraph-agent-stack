@@ -166,7 +166,7 @@ def rejection_node(state: HumanLoopState) -> dict[str, str]:
     """
     return {
         "result": (
-            "Action rejected by human operator. " "No changes were made to any system."
+            "Action rejected by human operator. No changes were made to any system."
         )
     }
 

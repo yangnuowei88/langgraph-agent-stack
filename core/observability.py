@@ -21,6 +21,7 @@ installed, standard ``logging`` and no-op tracing are used instead.
 from __future__ import annotations
 
 import contextvars
+import importlib.util
 import logging
 import os
 from collections.abc import Generator
@@ -149,20 +150,10 @@ def configure_logging(level: str = "INFO") -> None:
 # ---------------------------------------------------------------------------
 
 _tracer: Any | None = None
-_OTEL_AVAILABLE = False
-
 try:
-    from opentelemetry import trace
-    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
-        OTLPSpanExporter,
-    )
-    from opentelemetry.sdk.resources import Resource
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import BatchSpanProcessor
-
-    _OTEL_AVAILABLE = True
-except ImportError:
-    pass
+    _OTEL_AVAILABLE = importlib.util.find_spec("opentelemetry.sdk.trace") is not None
+except ModuleNotFoundError:
+    _OTEL_AVAILABLE = False
 
 
 def init_tracing(service_name: str = "langgraph-agent-stack") -> None:
@@ -186,6 +177,12 @@ def init_tracing(service_name: str = "langgraph-agent-stack") -> None:
     if not otel_enabled:
         logging.getLogger(__name__).debug("OTEL_ENABLED is not set — tracing disabled")
         return
+
+    from opentelemetry import trace
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
     resource = Resource.create({"service.name": service_name})
     provider = TracerProvider(resource=resource)
@@ -230,6 +227,8 @@ def get_tracer() -> Any:
     if _tracer is not None:
         return _tracer
     if _OTEL_AVAILABLE:
+        from opentelemetry import trace
+
         return trace.get_tracer("langgraph-agent-stack")
 
     return _NOOP_TRACER
@@ -264,6 +263,18 @@ def trace_span(
 # ---------------------------------------------------------------------------
 
 # pack_run_cost_usd_total Counter is defined in core/cost.py to avoid circular imports
+
+# Optional Prometheus metrics — ``None`` when ``prometheus-client`` is not installed.
+http_requests_total: Any | None = None
+http_request_duration_seconds: Any | None = None
+llm_requests_total: Any | None = None
+llm_request_duration_seconds: Any | None = None
+llm_tokens_total: Any | None = None
+active_pipelines: Any | None = None
+server_shutting_down: Any | None = None
+requests_rejected_during_shutdown: Any | None = None
+_PROMETHEUS_AVAILABLE = False
+
 
 try:
     from prometheus_client import (
@@ -320,15 +331,6 @@ try:
     _PROMETHEUS_AVAILABLE = True
 
 except ImportError:
-    http_requests_total = None  # type: ignore[assignment]
-    http_request_duration_seconds = None  # type: ignore[assignment]
-    llm_requests_total = None  # type: ignore[assignment]
-    llm_request_duration_seconds = None  # type: ignore[assignment]
-    llm_tokens_total = None  # type: ignore[assignment]
-    active_pipelines = None  # type: ignore[assignment]
-    server_shutting_down = None  # type: ignore[assignment]
-    requests_rejected_during_shutdown = None  # type: ignore[assignment]
-    _PROMETHEUS_AVAILABLE = False
 
     def create_metrics_app() -> Any:
         """No-op when prometheus-client is not installed."""

@@ -12,7 +12,7 @@ import json
 from typing import Literal
 
 from langchain_core.language_models import BaseChatModel
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 LLMProvider = Literal[
     "anthropic", "openai", "google", "bedrock", "azure", "ollama", "mock"
@@ -23,6 +23,11 @@ class LLMConfig(BaseModel):
     """Configuration for the LLM provider. All fields have sensible defaults."""
 
     provider: LLMProvider = "anthropic"
+    request_timeout_seconds: float = Field(
+        default=120.0,
+        ge=1.0,
+        description="Wall-clock timeout per LLM HTTP request (seconds).",
+    )
     # Anthropic
     anthropic_api_key: str | None = None
     anthropic_model: str = "claude-3-5-sonnet-20241022"
@@ -87,6 +92,7 @@ def get_llm(config: LLMConfig) -> BaseChatModel:
                 model=config.anthropic_model,
                 api_key=config.anthropic_api_key,
                 max_tokens=config.max_tokens,
+                default_request_timeout=config.request_timeout_seconds,
             )
 
         case "openai":
@@ -102,6 +108,7 @@ def get_llm(config: LLMConfig) -> BaseChatModel:
                 model=config.openai_model,
                 api_key=config.openai_api_key,
                 max_tokens=config.max_tokens,
+                request_timeout=config.request_timeout_seconds,
             )
 
         case "google":
@@ -117,6 +124,7 @@ def get_llm(config: LLMConfig) -> BaseChatModel:
                 model=config.google_model,
                 google_api_key=config.google_api_key,
                 max_output_tokens=config.max_tokens,
+                timeout=config.request_timeout_seconds,
             )
 
         case "bedrock":
@@ -132,6 +140,8 @@ def get_llm(config: LLMConfig) -> BaseChatModel:
                 raise ValueError(
                     "aws_secret_access_key is required for the 'bedrock' provider."
                 )
+            from botocore.config import Config
+
             return ChatBedrock(
                 model_id=config.bedrock_model,
                 region_name=config.aws_region,
@@ -139,6 +149,10 @@ def get_llm(config: LLMConfig) -> BaseChatModel:
                 credentials_profile_name=None,
                 aws_access_key_id=config.aws_access_key_id,
                 aws_secret_access_key=config.aws_secret_access_key,
+                config=Config(
+                    read_timeout=int(config.request_timeout_seconds),
+                    connect_timeout=min(10, int(config.request_timeout_seconds)),
+                ),
             )
 
         case "azure":
@@ -159,6 +173,7 @@ def get_llm(config: LLMConfig) -> BaseChatModel:
                 api_key=config.azure_openai_api_key,
                 azure_endpoint=config.azure_openai_endpoint,
                 max_tokens=config.max_tokens,
+                request_timeout=config.request_timeout_seconds,
             )
 
         case "ollama":
@@ -170,6 +185,8 @@ def get_llm(config: LLMConfig) -> BaseChatModel:
                 model=config.ollama_model,
                 base_url=config.ollama_base_url,
                 num_predict=config.max_tokens,
+                sync_client_kwargs={"timeout": config.request_timeout_seconds},
+                async_client_kwargs={"timeout": config.request_timeout_seconds},
             )
 
         case "mock":

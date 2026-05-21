@@ -59,6 +59,17 @@ class TestSettingsLlmConfig:
         assert isinstance(config, LLMConfig)
         assert config.provider == "anthropic"
         assert config.anthropic_api_key == "sk-ant-test123456789012345"
+        assert config.request_timeout_seconds == 120.0
+
+    def test_llm_config_includes_custom_request_timeout(self) -> None:
+        from core.config import Settings
+
+        settings = Settings(
+            llm_provider="anthropic",
+            anthropic_api_key="sk-ant-test123456789012345",
+            llm_request_timeout_seconds=45.0,
+        )
+        assert settings.llm_config.request_timeout_seconds == 45.0
 
 
 class TestSettingsValidators:

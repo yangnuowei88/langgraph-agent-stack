@@ -3,7 +3,8 @@ tests/conftest.py — Shared pytest fixtures for the langgraph-agent-stack test 
 
 All fixtures use mocks so that no real LLM API calls are made during tests.
 The FastAPI TestClient is wired to a patched application that replaces
-MultiAgentGraph and ResearchAgent with MagicMock instances.
+the legacy pack class (via ``get_legacy_pack_cls`` dependency override) and
+``ResearchAgent`` with MagicMock instances.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agents.models import AnalysisReport, ResearchResult
+from tests.legacy_pack_override import override_legacy_pack_cls
 
 # ---------------------------------------------------------------------------
 # Domain-object fixtures
@@ -130,7 +132,7 @@ def test_client(
     mock_checkpointer = MagicMock()
 
     with (
-        patch("api.main.MultiAgentGraph", mock_graph_cls),
+        override_legacy_pack_cls(mock_graph_cls),
         patch("api.main.ResearchAgent", mock_researcher_cls),
         patch("api.main._rate_limiter", permissive_limiter),
         patch("api.main.get_shared_llm", return_value=mock_llm),

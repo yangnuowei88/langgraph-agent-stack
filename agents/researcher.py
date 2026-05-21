@@ -273,7 +273,7 @@ class ResearchAgent(BaseAgent):
             "comprehensive, structured summary. Include key facts, main themes, and "
             "any conflicting information.\n\n"
             "Snippets:\n"
-            + "\n\n".join(f"[{i+1}] {s}" for i, s in enumerate(findings[:10]))
+            + "\n\n".join(f"[{i + 1}] {s}" for i, s in enumerate(findings[:10]))
             + "\n\nProvide a JSON object with keys: "
             '{"summary": "...", "confidence": 0.0-1.0}'
         )
@@ -287,11 +287,12 @@ class ResearchAgent(BaseAgent):
                     HumanMessage(content=summary_prompt),
                 ]
             )
-            parsed = json.loads(extract_text_content(summary_msg.content))
-            summary_text = parsed.get("summary", str(summary_msg.content))
-            confidence = float(parsed.get("confidence", 0.7))
-        except json.JSONDecodeError:
-            summary_text = extract_text_content(summary_msg.content)
+            try:
+                parsed = json.loads(extract_text_content(summary_msg.content))
+                summary_text = parsed.get("summary", str(summary_msg.content))
+                confidence = float(parsed.get("confidence", 0.7))
+            except json.JSONDecodeError:
+                summary_text = extract_text_content(summary_msg.content)
         except Exception:
             logger.warning(
                 "Summarize node parsing failed — using defaults",

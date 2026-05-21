@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class TalentScreeningInput(BaseModel):
@@ -13,6 +13,8 @@ class TalentScreeningInput(BaseModel):
 
 
 class TalentScreeningOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
     fit_score: float = Field(ge=0.0, le=1.0)
     matched_skills: list[str]
     gaps: list[str]

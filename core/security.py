@@ -6,9 +6,13 @@ the most common attack vectors at the API layer and in structured logging:
 
 ``InputValidator``
     Validates and sanitises free-text queries.  Enforces a maximum character
-    length, rejects null bytes, and detects a configurable set of dangerous
-    patterns (prompt injection, SSRF-style payloads, template injection,
-    path traversal).
+    length, rejects null bytes, and normalises whitespace.  Prompt-injection
+    mitigation belongs in ``domain_packs/common/prompt_safety.py`` (delimiter
+    wrapping), not regex blocking of user text.
+
+``validate_outbound_url``
+    SSRF guard for URLs passed to ``httpx`` (connector fetches).  Blocks
+    loopback, link-local, metadata, and private IP targets.
 
 ``RateLimiter``
     In-memory sliding-window rate limiter keyed by client IP.  Designed to be
@@ -23,6 +27,12 @@ the most common attack vectors at the API layer and in structured logging:
     LLM provider before it is handed to the SDK, catching common
     misconfiguration errors early.  Supports Anthropic, OpenAI, and a
     generic fallback for other providers.
+
+``ensure_request_body_within_limit``
+    Reads (or rejects) HTTP request bodies before route handlers parse JSON.
+    Checks ``Content-Length`` and performs a stream-bounded read for chunked
+    uploads so oversized payloads are rejected with 413 without buffering
+    multi-megabyte bodies in memory.
 
 All public functions and classes carry complete type hints and docstrings.
 """
@@ -39,39 +49,33 @@ from collections import deque
 from collections.abc import Mapping
 from functools import lru_cache
 from typing import Any, Literal, Protocol, cast, runtime_checkable
+from urllib.parse import urlparse
+
+from starlette.requests import Request
 
 logger = logging.getLogger(__name__)
+
+# Default cap for inbound JSON API bodies (defence against multi-MB payloads).
+DEFAULT_MAX_REQUEST_BODY_BYTES: int = 1_048_576  # 1 MiB
+
+_BODY_METHODS: frozenset[str] = frozenset({"POST", "PUT", "PATCH"})
 
 # ---------------------------------------------------------------------------
 # InputValidator
 # ---------------------------------------------------------------------------
 
-# Patterns that signal prompt-injection or server-side injection attempts.
-# Each entry is a compiled regex.  Matching is case-insensitive.
-_DANGEROUS_PATTERNS: list[re.Pattern[str]] = [
-    # Prompt injection / jailbreak markers
-    re.compile(r"ignore\s+(all\s+)?previous\s+instructions?", re.IGNORECASE),
-    re.compile(r"you\s+are\s+now\s+(?:acting\s+as|a\s+)", re.IGNORECASE),
-    re.compile(r"</?(system|assistant|user|human|prompt)\s*/?>", re.IGNORECASE),
-    # Server-Side Template Injection
-    re.compile(r"\{\{.*?[|%.].*?\}\}", re.IGNORECASE | re.DOTALL),
-    re.compile(
-        r"\{%-?\s*(import|from|include|extends|block|macro|call|set)\b", re.IGNORECASE
-    ),
-    # SSRF / internal endpoint probing
-    re.compile(
-        r"https?://(?:169\.254\.169\.254|metadata\.google\.internal|localhost|127\.\d+\.\d+\.\d+|::1|0\.0\.0\.0)",
-        re.IGNORECASE,
-    ),
-    # Path traversal
-    re.compile(r"(?:\.\.[\\/]){2,}", re.IGNORECASE),
-    # Null bytes
-    re.compile(r"\x00"),
-]
-
 # Maximum query length in characters (mirrors the Pydantic model constraint;
 # validated here as a defence-in-depth layer with a clear error message).
 _DEFAULT_MAX_LENGTH: int = 2000
+
+# Outbound HTTP(S) targets that must never be fetched by connectors.
+_BLOCKED_OUTBOUND_HOSTNAMES: frozenset[str] = frozenset(
+    {
+        "localhost",
+        "metadata.google.internal",
+        "metadata.google",
+    }
+)
 
 
 class InputValidator:
@@ -80,9 +84,8 @@ class InputValidator:
 
     The validator applies three checks in order:
     1. Length enforcement — rejects inputs that exceed ``max_length`` characters.
-    2. Dangerous-pattern detection — rejects inputs that match any entry in the
-       ``_DANGEROUS_PATTERNS`` list (prompt injection, SSRF, template injection,
-       path traversal, null bytes).
+    2. Null-byte rejection — rejects embedded ``\\x00`` (Pydantic also blocks
+       these on model fields; kept here for defence in depth on raw strings).
     3. Sanitisation — strips leading/trailing whitespace and collapses runs of
        three or more consecutive newlines to two, preventing log-injection via
        newline flooding.
@@ -123,10 +126,9 @@ class InputValidator:
             The sanitised query string (whitespace-normalised).
 
         Raises:
-            ValueError: When the query exceeds ``max_length`` or matches a
-                        dangerous pattern.  The message is safe to surface to
-                        API callers (it does not reveal internal implementation
-                        details).
+            ValueError: When the query exceeds ``max_length``, contains a null
+                        byte, or is not a string.  Messages are safe to surface
+                        to API callers.
         """
         if not isinstance(query, str):
             raise ValueError("Query must be a string.")
@@ -140,7 +142,7 @@ class InputValidator:
         return self.check_content_safety(query, max_length=self.max_length)
 
     def check_content_safety(self, text: str, *, max_length: int | None = None) -> str:
-        """Reject dangerous patterns; enforce ``max_length`` when provided.
+        """Enforce length and null-byte rules; normalise whitespace.
 
         Used for per-field validation on typed pack bodies where each field may
         have a different Pydantic ``max_length`` than the global query cap.
@@ -155,15 +157,117 @@ class InputValidator:
                 f"(received {len(text)} characters)."
             )
 
-        for pattern in _DANGEROUS_PATTERNS:
-            if pattern.search(text):
-                raise ValueError(
-                    "Query contains disallowed content and cannot be processed."
-                )
+        if "\x00" in text:
+            raise ValueError("Input contains disallowed null bytes.")
 
         sanitised = text.strip()
         sanitised = re.sub(r"\n{3,}", "\n\n", sanitised)
         return sanitised
+
+
+def validate_outbound_url(url: str) -> str:
+    """Reject outbound HTTP(S) URLs that target internal or metadata endpoints.
+
+    Call this on every URL immediately before ``httpx`` fetches — not on free-text
+    LLM queries, which are never used as fetch targets.
+
+    Args:
+        url: Fully resolved URL string (scheme, host, path).
+
+    Returns:
+        The input ``url`` unchanged when allowed.
+
+    Raises:
+        ValueError: When the scheme is not ``http``/``https``, the host is missing,
+                    or the host resolves to a blocked target.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        raise ValueError(f"Outbound URL scheme not allowed: {parsed.scheme!r}")
+
+    host = parsed.hostname
+    if not host:
+        raise ValueError("Outbound URL must include a hostname.")
+
+    host_lower = host.lower().rstrip(".")
+    if host_lower in _BLOCKED_OUTBOUND_HOSTNAMES:
+        raise ValueError(f"Outbound URL target not allowed: {host!r}")
+
+    bare = host_lower.strip("[]")
+    try:
+        addr = ipaddress.ip_address(bare)
+    except ValueError:
+        return url
+
+    if (
+        addr.is_loopback
+        or addr.is_private
+        or addr.is_link_local
+        or addr.is_reserved
+        or addr.is_multicast
+    ):
+        raise ValueError(f"Outbound URL target not allowed: {host!r}")
+
+    return url
+
+
+# ---------------------------------------------------------------------------
+# Request body size limit
+# ---------------------------------------------------------------------------
+
+
+def _parse_content_length(content_length: str | None) -> int | None:
+    """Return declared body size, or ``None`` when the header is absent."""
+    if content_length is None or content_length.strip() == "":
+        return None
+    try:
+        return int(content_length)
+    except ValueError:
+        raise ValueError("Invalid Content-Length header.") from None
+
+
+async def ensure_request_body_within_limit(
+    request: Request,
+    max_bytes: int,
+) -> tuple[Request | None, str | None]:
+    """Bound inbound body size before FastAPI/Pydantic JSON parsing.
+
+    Checks ``Content-Length`` first, then reads the body with a streaming cap
+    for chunked uploads.  Returns a new :class:`Request` whose body can be read
+    again by downstream handlers.
+
+    Args:
+        request: Incoming Starlette request.
+        max_bytes: Maximum allowed body size in bytes.
+
+    Returns:
+        ``(request, None)`` when within limits, or ``(None, detail)`` when the
+        body must be rejected (caller should return HTTP 413).
+    """
+    if request.method not in _BODY_METHODS:
+        return request, None
+
+    try:
+        declared = _parse_content_length(request.headers.get("content-length"))
+    except ValueError as exc:
+        return None, str(exc)
+
+    if declared is not None:
+        if declared > max_bytes:
+            return None, (f"Request body too large. Maximum size is {max_bytes} bytes.")
+        # Trust Content-Length — downstream ASGI stack reads the body once.
+        return request, None
+
+    body = b""
+    async for chunk in request.stream():
+        body += chunk
+        if len(body) > max_bytes:
+            return None, (f"Request body too large. Maximum size is {max_bytes} bytes.")
+
+    async def receive() -> dict[str, Any]:
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    return Request(request.scope, receive), None
 
 
 # ---------------------------------------------------------------------------
