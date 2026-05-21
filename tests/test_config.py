@@ -71,6 +71,25 @@ class TestSettingsLlmConfig:
         )
         assert settings.llm_config.request_timeout_seconds == 45.0
 
+    def test_llm_config_propagates_provider_base_urls(self) -> None:
+        from core.config import Settings
+
+        settings = Settings(
+            llm_provider="openai",
+            openai_api_key="sk-openai-test123456789012345",
+            anthropic_base_url="https://anthropic.gateway.example",
+            openai_base_url="https://openrouter.ai/api/v1",
+            google_base_url="https://google.gateway.example",
+            bedrock_endpoint_url="https://bedrock.vpce.example",
+            azure_openai_base_url="https://azure.gateway.example",
+        )
+        config = settings.llm_config
+        assert config.anthropic_base_url == "https://anthropic.gateway.example"
+        assert config.openai_base_url == "https://openrouter.ai/api/v1"
+        assert config.google_base_url == "https://google.gateway.example"
+        assert config.bedrock_endpoint_url == "https://bedrock.vpce.example"
+        assert config.azure_openai_base_url == "https://azure.gateway.example"
+
 
 class TestSettingsValidators:
     def test_postgres_backend_requires_postgres_url(self) -> None:

@@ -285,6 +285,14 @@ resource "aws_iam_policy" "langgraph_irsa" {
     Version = "2012-10-17"
     Statement = [
       {
+        Effect = "Allow"
+        Action = [
+          "bedrock:InvokeModel",
+          "bedrock:InvokeModelWithResponseStream",
+        ]
+        Resource = "*"
+      },
+      {
         # Allow reading secrets from AWS Secrets Manager if needed.
         Effect = "Allow"
         Action = [

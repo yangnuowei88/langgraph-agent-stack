@@ -150,7 +150,7 @@ Set `LLM_PROVIDER` in your `.env` and install the matching extra. Provider-speci
 | Anthropic (Claude) | `anthropic` | `uv sync --extra anthropic` | `ANTHROPIC_API_KEY` |
 | OpenAI (GPT) | `openai` | `uv sync --extra openai` | `OPENAI_API_KEY` |
 | Google (Gemini) | `google` | `uv sync --extra google` | `GOOGLE_API_KEY` |
-| AWS Bedrock | `bedrock` | `uv sync --extra bedrock` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` |
+| AWS Bedrock | `bedrock` | `uv sync --extra bedrock` | `AWS_REGION`, `BEDROCK_MODEL`; static keys optional (IRSA/Pod Identity on EKS) |
 | Azure OpenAI | `azure` | `uv sync --extra openai` | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT` |
 | Ollama (local) | `ollama` | `uv sync --extra ollama` | None — runs locally |
 | **Mock (dev)** | `mock` | None — included in langchain-core | None — deterministic responses |
@@ -175,6 +175,23 @@ OLLAMA_MODEL=llama3.2
 ```
 ```bash
 uv sync --extra ollama
+```
+
+**Enterprise gateways (LiteLLM, OpenRouter, Helicone, internal proxy):** each cloud provider accepts an optional base URL override so traffic can route through a compliance or cost gateway without code changes.
+
+```env
+# OpenAI-compatible gateways (OpenRouter, LiteLLM /v1, Together AI, Anyscale)
+LLM_PROVIDER=openai
+OPENAI_API_KEY=sk-...
+OPENAI_BASE_URL=https://openrouter.ai/api/v1
+
+# Anthropic via Helicone / LiteLLM
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_BASE_URL=https://litellm.internal.example.com/anthropic
+
+# Bedrock VPC endpoint or custom runtime proxy
+BEDROCK_ENDPOINT_URL=https://bedrock-runtime.us-east-1.amazonaws.com
 ```
 
 **Mock (no API key, deterministic responses for development/CI):**
@@ -585,16 +602,21 @@ All configuration is loaded from environment variables. Copy `.env.example` to `
 |----------|---------|-----------|
 | `ANTHROPIC_API_KEY` | — | `LLM_PROVIDER=anthropic` |
 | `ANTHROPIC_MODEL` | `claude-3-5-sonnet-20241022` | `LLM_PROVIDER=anthropic` |
+| `ANTHROPIC_BASE_URL` | — | Optional gateway for `LLM_PROVIDER=anthropic` |
 | `OPENAI_API_KEY` | — | `LLM_PROVIDER=openai` |
 | `OPENAI_MODEL` | `gpt-4o` | `LLM_PROVIDER=openai` |
+| `OPENAI_BASE_URL` | — | Optional OpenAI-compatible gateway (`LLM_PROVIDER=openai`) |
 | `GOOGLE_API_KEY` | — | `LLM_PROVIDER=google` |
 | `GOOGLE_MODEL` | `gemini-1.5-pro` | `LLM_PROVIDER=google` |
-| `AWS_ACCESS_KEY_ID` | — | `LLM_PROVIDER=bedrock` |
-| `AWS_SECRET_ACCESS_KEY` | — | `LLM_PROVIDER=bedrock` |
+| `GOOGLE_BASE_URL` | — | Optional gateway for `LLM_PROVIDER=google` |
+| `AWS_ACCESS_KEY_ID` | — | Optional static creds for `LLM_PROVIDER=bedrock` (local dev) |
+| `AWS_SECRET_ACCESS_KEY` | — | Optional static creds for `LLM_PROVIDER=bedrock` (local dev) |
 | `AWS_REGION` | `us-east-1` | `LLM_PROVIDER=bedrock` |
 | `BEDROCK_MODEL` | `anthropic.claude-3-5-sonnet-20241022-v2:0` | `LLM_PROVIDER=bedrock` |
+| `BEDROCK_ENDPOINT_URL` | — | Optional Bedrock Runtime endpoint (VPC / proxy) |
 | `AZURE_OPENAI_API_KEY` | — | `LLM_PROVIDER=azure` |
 | `AZURE_OPENAI_ENDPOINT` | — | `LLM_PROVIDER=azure` |
+| `AZURE_OPENAI_BASE_URL` | — | Optional gateway for `LLM_PROVIDER=azure` |
 | `AZURE_OPENAI_DEPLOYMENT` | `gpt-4o` | `LLM_PROVIDER=azure` |
 | `OLLAMA_BASE_URL` | `http://localhost:11434` | `LLM_PROVIDER=ollama` |
 | `OLLAMA_MODEL` | `llama3.2` | `LLM_PROVIDER=ollama` |

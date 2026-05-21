@@ -18,6 +18,8 @@ data:
   ANTHROPIC_MODEL: {{ .Values.llm.anthropicModel | quote }}
   OPENAI_MODEL: {{ .Values.llm.openaiModel | quote }}
   GOOGLE_MODEL: {{ .Values.llm.googleModel | quote }}
+  AWS_REGION: {{ .Values.llm.awsRegion | quote }}
+  BEDROCK_MODEL: {{ .Values.llm.bedrockModel | quote }}
   OLLAMA_BASE_URL: {{ .Values.llm.ollamaBaseUrl | quote }}
   OLLAMA_MODEL: {{ .Values.llm.ollamaModel | quote }}
   RATE_LIMIT_BACKEND: {{ .Values.config.rateLimitBackend | default "memory" | quote }}

@@ -83,19 +83,61 @@ class Settings(BaseSettings):
         default="claude-3-5-sonnet-20241022",
         validation_alias="ANTHROPIC_MODEL",
     )
+    anthropic_base_url: str | None = Field(
+        default=None,
+        validation_alias="ANTHROPIC_BASE_URL",
+        description=(
+            "Optional Anthropic API base URL (LiteLLM, Helicone, internal gateway)."
+        ),
+    )
     openai_api_key: str | None = Field(default=None)
     openai_model: str = Field(default="gpt-4o", validation_alias="OPENAI_MODEL")
+    openai_base_url: str | None = Field(
+        default=None,
+        validation_alias="OPENAI_BASE_URL",
+        description=(
+            "Optional OpenAI-compatible base URL (LiteLLM, OpenRouter, Together AI)."
+        ),
+    )
     google_api_key: str | None = Field(default=None)
     google_model: str = Field(default="gemini-1.5-pro", validation_alias="GOOGLE_MODEL")
-    aws_access_key_id: str | None = Field(default=None)
-    aws_secret_access_key: str | None = Field(default=None)
+    google_base_url: str | None = Field(
+        default=None,
+        validation_alias="GOOGLE_BASE_URL",
+        description="Optional Google Generative AI API base URL override.",
+    )
+    aws_access_key_id: str | None = Field(
+        default=None,
+        description=(
+            "Optional static AWS access key for Bedrock (local dev). "
+            "Leave unset on EKS to use IRSA / Pod Identity via the default "
+            "boto3 credential chain."
+        ),
+    )
+    aws_secret_access_key: str | None = Field(
+        default=None,
+        description=(
+            "Optional static AWS secret key for Bedrock (local dev). "
+            "Must be set together with aws_access_key_id when used."
+        ),
+    )
     aws_region: str = Field(default="us-east-1", validation_alias="AWS_REGION")
     bedrock_model: str = Field(
         default="anthropic.claude-3-5-sonnet-20241022-v2:0",
         validation_alias="BEDROCK_MODEL",
     )
+    bedrock_endpoint_url: str | None = Field(
+        default=None,
+        validation_alias="BEDROCK_ENDPOINT_URL",
+        description="Optional Bedrock Runtime endpoint URL (VPC endpoint, proxy).",
+    )
     azure_openai_api_key: str | None = Field(default=None)
     azure_openai_endpoint: str | None = Field(default=None)
+    azure_openai_base_url: str | None = Field(
+        default=None,
+        validation_alias="AZURE_OPENAI_BASE_URL",
+        description="Optional Azure OpenAI HTTP base URL override (gateway / proxy).",
+    )
     azure_openai_deployment: str = Field(
         default="gpt-4o",
         validation_alias="AZURE_OPENAI_DEPLOYMENT",
@@ -331,17 +373,22 @@ class Settings(BaseSettings):
             provider=self.llm_provider,
             anthropic_api_key=self.anthropic_api_key,
             anthropic_model=self.anthropic_model,
+            anthropic_base_url=self.anthropic_base_url,
             max_tokens=self.max_tokens,
             openai_api_key=self.openai_api_key,
             openai_model=self.openai_model,
+            openai_base_url=self.openai_base_url,
             google_api_key=self.google_api_key,
             google_model=self.google_model,
+            google_base_url=self.google_base_url,
             aws_access_key_id=self.aws_access_key_id,
             aws_secret_access_key=self.aws_secret_access_key,
             aws_region=self.aws_region,
             bedrock_model=self.bedrock_model,
+            bedrock_endpoint_url=self.bedrock_endpoint_url,
             azure_openai_api_key=self.azure_openai_api_key,
             azure_openai_endpoint=self.azure_openai_endpoint,
+            azure_openai_base_url=self.azure_openai_base_url,
             azure_openai_deployment=self.azure_openai_deployment,
             ollama_base_url=self.ollama_base_url,
             ollama_model=self.ollama_model,

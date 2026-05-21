@@ -84,6 +84,8 @@ llm:
   anthropicModel: claude-3-5-sonnet-20241022
   openaiModel: gpt-4o
   googleModel: gemini-1.5-pro
+  awsRegion: us-east-1
+  bedrockModel: anthropic.claude-3-5-sonnet-20241022-v2:0
   ollamaBaseUrl: http://localhost:11434
   ollamaModel: llama3.2
 
@@ -98,8 +100,8 @@ serviceAccount:
   create: true
   name: ""
   annotations: {}
-  # Example — AWS IRSA role for EKS:
-  #   eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/my-role
+  # IRSA / EKS Pod Identity — bind an IAM role; do NOT mount static AWS keys:
+  #   eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/langgraph-bedrock
 
 podSecurityContext:
   runAsNonRoot: true
