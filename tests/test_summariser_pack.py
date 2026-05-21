@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from domain_packs.summariser.pack import SummariserPack
-from domain_packs.summariser.schemas import SummaryInput, SummaryOutput
+from domain_packs.productivity.summariser.pack import SummariserPack
+from domain_packs.productivity.summariser.schemas import SummaryInput, SummaryOutput
 
 
 def test_summariser_run_from_input_returns_summary_output() -> None:

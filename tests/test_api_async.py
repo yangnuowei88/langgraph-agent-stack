@@ -26,11 +26,11 @@ def _reset_module_state() -> None:
     ``httpx.AsyncClient`` with ``ASGITransport`` does NOT trigger the
     lifespan, these values must be reset manually.
     """
-    import api.main as api_module
+    import api.state as api_module
 
-    api_module._shutting_down.clear()
-    api_module._executor = None  # run_in_executor(None, …) uses default executor
-    api_module._shared_memory = None  # previous lifespan may have closed the DB
+    api_module.shutting_down.clear()
+    api_module.executor = None  # run_in_executor(None, …) uses default executor
+    api_module.shared_memory = None  # previous lifespan may have closed the DB
 
 
 def _make_mock_app():
@@ -65,14 +65,15 @@ def _make_mock_app():
     mock_graph_cls = MagicMock(return_value=mock_graph_instance)
 
     patches = [
-        patch("api.main._rate_limiter", permissive),
-        patch("api.main.get_shared_llm", return_value=MagicMock(spec=True)),
-        patch("api.main.get_shared_checkpointer", return_value=MagicMock()),
+        patch("api.state.rate_limiter", permissive),
+        patch("api.state.get_shared_llm", return_value=MagicMock(spec=True)),
+        patch("api.state.get_shared_checkpointer", return_value=MagicMock()),
     ]
     for p in patches:
         p.start()
 
-    from api.main import app, get_legacy_pack_cls
+    from api.main import app
+    from api.dependencies import get_legacy_pack_cls
 
     app.dependency_overrides[get_legacy_pack_cls] = lambda: mock_graph_cls
 
@@ -88,7 +89,8 @@ async def async_client():
         yield client
     for p in patches:
         p.stop()
-    from api.main import app, get_legacy_pack_cls
+    from api.main import app
+    from api.dependencies import get_legacy_pack_cls
 
     app.dependency_overrides.pop(get_legacy_pack_cls, None)
 
@@ -171,9 +173,9 @@ async def test_stream_timeout_error_emits_error_event() -> None:
 
     with (
         override_legacy_pack_cls(mock_graph_cls),
-        patch("api.main._rate_limiter", permissive),
-        patch("api.main.get_shared_llm", return_value=MagicMock(spec=True)),
-        patch("api.main.get_shared_checkpointer", return_value=MagicMock()),
+        patch("api.state.rate_limiter", permissive),
+        patch("api.state.get_shared_llm", return_value=MagicMock(spec=True)),
+        patch("api.state.get_shared_checkpointer", return_value=MagicMock()),
     ):
         from api.main import app
 
@@ -212,9 +214,9 @@ async def test_stream_execution_error_emits_error_event() -> None:
 
     with (
         override_legacy_pack_cls(mock_graph_cls),
-        patch("api.main._rate_limiter", permissive),
-        patch("api.main.get_shared_llm", return_value=MagicMock(spec=True)),
-        patch("api.main.get_shared_checkpointer", return_value=MagicMock()),
+        patch("api.state.rate_limiter", permissive),
+        patch("api.state.get_shared_llm", return_value=MagicMock(spec=True)),
+        patch("api.state.get_shared_checkpointer", return_value=MagicMock()),
     ):
         from api.main import app
 
@@ -242,9 +244,9 @@ async def test_stream_empty_query_returns_400() -> None:
     permissive = RateLimiter(max_requests=10_000, window_seconds=60.0)
 
     with (
-        patch("api.main._rate_limiter", permissive),
-        patch("api.main.get_shared_llm", return_value=MagicMock(spec=True)),
-        patch("api.main.get_shared_checkpointer", return_value=MagicMock()),
+        patch("api.state.rate_limiter", permissive),
+        patch("api.state.get_shared_llm", return_value=MagicMock(spec=True)),
+        patch("api.state.get_shared_checkpointer", return_value=MagicMock()),
     ):
         from api.main import app
 

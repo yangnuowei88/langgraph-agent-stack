@@ -417,7 +417,7 @@ class Settings(BaseSettings):
                 "Disable auth only in development/staging."
             )
         if self.connector_enabled:
-            from core.connectors import list_connector_ids
+            from connectors.resolver import list_connector_ids
 
             if self.connector_id not in list_connector_ids():
                 raise ValueError(

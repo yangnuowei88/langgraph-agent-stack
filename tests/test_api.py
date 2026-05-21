@@ -49,7 +49,7 @@ def test_health_check_with_llm_initialised() -> None:
     Regression test: LLMProvider is a Literal (str), not an Enum.
     Calling .value on it would raise AttributeError.
     """
-    import api.main as api_module
+    import api.state as api_module
     from core.security import RateLimiter
 
     permissive = RateLimiter(max_requests=10_000, window_seconds=60.0)
@@ -60,28 +60,28 @@ def test_health_check_with_llm_initialised() -> None:
     mock_memory.health_check.return_value = ("ok", ":memory:")
 
     with (
-        patch("api.main._rate_limiter", permissive),
-        patch("api.main.get_shared_llm", return_value=mock_llm),
-        patch("api.main.get_shared_checkpointer", return_value=mock_checkpointer),
+        patch("api.state.rate_limiter", permissive),
+        patch("api.state.get_shared_llm", return_value=mock_llm),
+        patch("api.state.get_shared_checkpointer", return_value=mock_checkpointer),
     ):
         from api.main import app
 
         with TestClient(app, raise_server_exceptions=False) as client:
             saved = (
-                api_module._shared_llm,
-                api_module._shared_checkpointer,
-                api_module._shared_memory,
+                api_module.shared_llm,
+                api_module.shared_checkpointer,
+                api_module.shared_memory,
             )
-            api_module._shared_llm = mock_llm
-            api_module._shared_checkpointer = mock_checkpointer
-            api_module._shared_memory = mock_memory
+            api_module.shared_llm = mock_llm
+            api_module.shared_checkpointer = mock_checkpointer
+            api_module.shared_memory = mock_memory
             try:
                 response = client.get("/health")
             finally:
                 (
-                    api_module._shared_llm,
-                    api_module._shared_checkpointer,
-                    api_module._shared_memory,
+                    api_module.shared_llm,
+                    api_module.shared_checkpointer,
+                    api_module.shared_memory,
                 ) = saved
 
     assert response.status_code == 200
@@ -112,9 +112,9 @@ def test_ready_returns_503_when_llm_not_initialised() -> None:
     permissive = RateLimiter(max_requests=10_000, window_seconds=60.0)
 
     with (
-        patch("api.main._rate_limiter", permissive),
-        patch("api.main.get_shared_llm", return_value=None),
-        patch("api.main.get_shared_checkpointer", return_value=MagicMock()),
+        patch("api.state.rate_limiter", permissive),
+        patch("api.state.get_shared_llm", return_value=None),
+        patch("api.state.get_shared_checkpointer", return_value=MagicMock()),
     ):
         from api.main import app
 
@@ -127,24 +127,24 @@ def test_ready_returns_503_when_llm_not_initialised() -> None:
 
 def test_ready_returns_503_when_shutting_down() -> None:
     """GET /ready must return 503 when the server is shutting down."""
-    import api.main as api_module
+    import api.state as api_module
     from core.security import RateLimiter
 
     permissive = RateLimiter(max_requests=10_000, window_seconds=60.0)
 
     with (
-        patch("api.main._rate_limiter", permissive),
-        patch("api.main.get_shared_llm", return_value=MagicMock(spec=True)),
-        patch("api.main.get_shared_checkpointer", return_value=MagicMock()),
+        patch("api.state.rate_limiter", permissive),
+        patch("api.state.get_shared_llm", return_value=MagicMock(spec=True)),
+        patch("api.state.get_shared_checkpointer", return_value=MagicMock()),
     ):
         from api.main import app
 
         with TestClient(app, raise_server_exceptions=False) as client:
-            api_module._shutting_down.set()
+            api_module.shutting_down.set()
             try:
                 response = client.get("/ready")
             finally:
-                api_module._shutting_down.clear()
+                api_module.shutting_down.clear()
 
     assert response.status_code == 503
     assert "shutting down" in response.json()["detail"].lower()
@@ -307,9 +307,9 @@ def test_rate_limiting() -> None:
 
     with (
         override_legacy_pack_cls(mock_graph_cls),
-        patch("api.main._rate_limiter", tight_limiter),
-        patch("api.main.get_shared_llm", return_value=MagicMock(spec=True)),
-        patch("api.main.get_shared_checkpointer", return_value=MagicMock()),
+        patch("api.state.rate_limiter", tight_limiter),
+        patch("api.state.get_shared_llm", return_value=MagicMock(spec=True)),
+        patch("api.state.get_shared_checkpointer", return_value=MagicMock()),
     ):
         from api.main import app
 
@@ -338,10 +338,10 @@ def test_rate_limiting_on_research() -> None:
     )
 
     with (
-        patch("api.main.ResearchAgent", return_value=mock_agent),
-        patch("api.main._rate_limiter", tight_limiter),
-        patch("api.main.get_shared_llm", return_value=MagicMock(spec=True)),
-        patch("api.main.get_shared_checkpointer", return_value=MagicMock()),
+        patch("api.endpoints.pipeline.ResearchAgent", return_value=mock_agent),
+        patch("api.state.rate_limiter", tight_limiter),
+        patch("api.state.get_shared_llm", return_value=MagicMock(spec=True)),
+        patch("api.state.get_shared_checkpointer", return_value=MagicMock()),
     ):
         from api.main import app
 
@@ -387,11 +387,11 @@ def test_rate_limiting_isolated_per_xff_client() -> None:
 
     with (
         override_legacy_pack_cls(mock_graph_cls),
-        patch("api.main._rate_limiter", tight_limiter),
-        patch("api.main.get_settings", return_value=proxy_settings),
-        patch("api.main._request_peer_host", return_value="10.0.0.1"),
-        patch("api.main.get_shared_llm", return_value=MagicMock(spec=True)),
-        patch("api.main.get_shared_checkpointer", return_value=MagicMock()),
+        patch("api.state.rate_limiter", tight_limiter),
+        patch("api.dependencies.get_settings", return_value=proxy_settings),
+        patch("api.dependencies._request_peer_host", return_value="10.0.0.1"),
+        patch("api.state.get_shared_llm", return_value=MagicMock(spec=True)),
+        patch("api.state.get_shared_checkpointer", return_value=MagicMock()),
     ):
         from api.main import app
 
@@ -489,16 +489,16 @@ def test_get_session_history_with_populated_data() -> None:
     permissive = RateLimiter(max_requests=10_000, window_seconds=60.0)
 
     with (
-        patch("api.main._rate_limiter", permissive),
-        patch("api.main.get_shared_llm", return_value=MagicMock(spec=True)),
-        patch("api.main.get_shared_checkpointer", return_value=MagicMock()),
+        patch("api.state.rate_limiter", permissive),
+        patch("api.state.get_shared_llm", return_value=MagicMock(spec=True)),
+        patch("api.state.get_shared_checkpointer", return_value=MagicMock()),
     ):
         from api.main import app
 
         with TestClient(app, raise_server_exceptions=False) as client:
-            import api.main as api_module
+            import api.state as api_module
 
-            mem = api_module._shared_memory
+            mem = api_module.shared_memory
             if mem is not None:
                 mem.save_run(
                     run_id="test-run-populated-001",
@@ -596,10 +596,10 @@ def _auth_client_ctx(
             with (
                 patch.dict(os.environ, env_overlay, clear=False),
                 override_legacy_pack_cls(mock_graph_cls),
-                patch("api.main.ResearchAgent", mock_agent_cls),
-                patch("api.main._rate_limiter", permissive),
-                patch("api.main.get_shared_llm", return_value=MagicMock(spec=True)),
-                patch("api.main.get_shared_checkpointer", return_value=MagicMock()),
+                patch("api.endpoints.pipeline.ResearchAgent", mock_agent_cls),
+                patch("api.state.rate_limiter", permissive),
+                patch("api.state.get_shared_llm", return_value=MagicMock(spec=True)),
+                patch("api.state.get_shared_checkpointer", return_value=MagicMock()),
             ):
                 from api.main import app
 
@@ -748,16 +748,21 @@ def test_root_returns_service_info_in_production() -> None:
     )
     permissive = RateLimiter(max_requests=10_000, window_seconds=60.0)
 
+    from core.config import get_settings as _get_settings
+
     with (
-        patch("api.main.get_settings", return_value=prod_settings),
-        patch("api.main._rate_limiter", permissive),
-        patch("api.main.get_shared_llm", return_value=MagicMock(spec=True)),
-        patch("api.main.get_shared_checkpointer", return_value=MagicMock()),
+        patch("api.state.rate_limiter", permissive),
+        patch("api.state.get_shared_llm", return_value=MagicMock(spec=True)),
+        patch("api.state.get_shared_checkpointer", return_value=MagicMock()),
     ):
         from api.main import app
 
-        with TestClient(app, raise_server_exceptions=False) as client:
-            response = client.get("/")
+        app.dependency_overrides[_get_settings] = lambda: prod_settings
+        try:
+            with TestClient(app, raise_server_exceptions=False) as client:
+                response = client.get("/")
+        finally:
+            app.dependency_overrides.pop(_get_settings, None)
 
     assert response.status_code == 200
     body = response.json()
@@ -768,7 +773,7 @@ def test_root_returns_service_info_in_production() -> None:
 
 def test_research_agent_error_returns_500(test_client: TestClient) -> None:
     """POST /research must return 500 when ResearchAgent raises AgentExecutionError."""
-    with patch("api.main.ResearchAgent") as mock_cls:
+    with patch("api.endpoints.pipeline.ResearchAgent") as mock_cls:
         inst = MagicMock()
         inst.run_structured.side_effect = AgentExecutionError("Research failed")
         mock_cls.return_value = inst
@@ -786,8 +791,8 @@ def test_run_returns_503_when_llm_not_configured() -> None:
 
     permissive = RateLimiter(max_requests=10_000, window_seconds=60.0)
     with (
-        patch("api.main._rate_limiter", permissive),
-        patch("api.main.get_shared_llm", return_value=None),
+        patch("api.state.rate_limiter", permissive),
+        patch("api.state.get_shared_llm", return_value=None),
     ):
         from api.main import app
 
@@ -839,9 +844,9 @@ def test_run_stream_timeout_returns_error_event() -> None:
 
     with (
         override_legacy_pack_cls(mock_graph_cls),
-        patch("api.main._rate_limiter", permissive),
-        patch("api.main.get_shared_llm", return_value=MagicMock(spec=True)),
-        patch("api.main.get_shared_checkpointer", return_value=MagicMock()),
+        patch("api.state.rate_limiter", permissive),
+        patch("api.state.get_shared_llm", return_value=MagicMock(spec=True)),
+        patch("api.state.get_shared_checkpointer", return_value=MagicMock()),
     ):
         from api.main import app
 
@@ -876,19 +881,19 @@ def _shutdown_client_ctx():
     @contextmanager
     def _ctx():
         with (
-            patch("api.main._rate_limiter", permissive),
-            patch("api.main.get_shared_llm", return_value=MagicMock(spec=True)),
-            patch("api.main.get_shared_checkpointer", return_value=MagicMock()),
+            patch("api.state.rate_limiter", permissive),
+            patch("api.state.get_shared_llm", return_value=MagicMock(spec=True)),
+            patch("api.state.get_shared_checkpointer", return_value=MagicMock()),
         ):
-            import api.main as api_module
+            import api.state as api_module
             from api.main import app
 
             with TestClient(app, raise_server_exceptions=False) as client:
-                api_module._shutting_down.set()
+                api_module.shutting_down.set()
                 try:
                     yield client
                 finally:
-                    api_module._shutting_down.clear()
+                    api_module.shutting_down.clear()
 
     return _ctx()
 
@@ -949,9 +954,9 @@ def test_run_stream_agent_execution_error_emits_error_event() -> None:
 
     with (
         override_legacy_pack_cls(mock_graph_cls),
-        patch("api.main._rate_limiter", permissive),
-        patch("api.main.get_shared_llm", return_value=MagicMock(spec=True)),
-        patch("api.main.get_shared_checkpointer", return_value=MagicMock()),
+        patch("api.state.rate_limiter", permissive),
+        patch("api.state.get_shared_llm", return_value=MagicMock(spec=True)),
+        patch("api.state.get_shared_checkpointer", return_value=MagicMock()),
     ):
         from api.main import app
 
@@ -990,10 +995,10 @@ def test_run_stream_active_pipelines_gauge_decremented_on_error() -> None:
 
     with (
         override_legacy_pack_cls(mock_graph_cls),
-        patch("api.main._rate_limiter", permissive),
-        patch("api.main.get_shared_llm", return_value=MagicMock(spec=True)),
-        patch("api.main.get_shared_checkpointer", return_value=MagicMock()),
-        patch("api.main.active_pipelines", mock_gauge),
+        patch("api.state.rate_limiter", permissive),
+        patch("api.state.get_shared_llm", return_value=MagicMock(spec=True)),
+        patch("api.state.get_shared_checkpointer", return_value=MagicMock()),
+        patch("api.endpoints.pipeline.active_pipelines", mock_gauge),
     ):
         from api.main import app
 
@@ -1034,10 +1039,10 @@ def test_run_stream_active_pipelines_gauge_decremented_on_success() -> None:
 
     with (
         override_legacy_pack_cls(mock_graph_cls),
-        patch("api.main._rate_limiter", permissive),
-        patch("api.main.get_shared_llm", return_value=MagicMock(spec=True)),
-        patch("api.main.get_shared_checkpointer", return_value=MagicMock()),
-        patch("api.main.active_pipelines", mock_gauge),
+        patch("api.state.rate_limiter", permissive),
+        patch("api.state.get_shared_llm", return_value=MagicMock(spec=True)),
+        patch("api.state.get_shared_checkpointer", return_value=MagicMock()),
+        patch("api.endpoints.pipeline.active_pipelines", mock_gauge),
     ):
         from api.main import app
 
@@ -1081,9 +1086,9 @@ def test_run_response_includes_cost_usd() -> None:
 
     with (
         override_legacy_pack_cls(mock_graph_cls),
-        patch("api.main._rate_limiter", permissive),
-        patch("api.main.get_shared_llm", return_value=MagicMock(spec=True)),
-        patch("api.main.get_shared_checkpointer", return_value=MagicMock()),
+        patch("api.state.rate_limiter", permissive),
+        patch("api.state.get_shared_llm", return_value=MagicMock(spec=True)),
+        patch("api.state.get_shared_checkpointer", return_value=MagicMock()),
     ):
         from api.main import app
 
@@ -1110,9 +1115,9 @@ def test_budget_exceeded_returns_402() -> None:
 
     with (
         override_legacy_pack_cls(mock_graph_cls),
-        patch("api.main._rate_limiter", permissive),
-        patch("api.main.get_shared_llm", return_value=MagicMock(spec=True)),
-        patch("api.main.get_shared_checkpointer", return_value=MagicMock()),
+        patch("api.state.rate_limiter", permissive),
+        patch("api.state.get_shared_llm", return_value=MagicMock(spec=True)),
+        patch("api.state.get_shared_checkpointer", return_value=MagicMock()),
     ):
         from api.main import app as _app
 
@@ -1129,15 +1134,15 @@ def test_research_budget_exceeded_returns_402() -> None:
 
     permissive = RateLimiter(max_requests=10_000, window_seconds=60.0)
 
-    with patch("api.main.ResearchAgent") as mock_cls:
+    with patch("api.endpoints.pipeline.ResearchAgent") as mock_cls:
         inst = MagicMock()
         inst.run_structured.side_effect = AgentBudgetExceededError("Budget exceeded")
         mock_cls.return_value = inst
 
         with (
-            patch("api.main._rate_limiter", permissive),
-            patch("api.main.get_shared_llm", return_value=MagicMock(spec=True)),
-            patch("api.main.get_shared_checkpointer", return_value=MagicMock()),
+            patch("api.state.rate_limiter", permissive),
+            patch("api.state.get_shared_llm", return_value=MagicMock(spec=True)),
+            patch("api.state.get_shared_checkpointer", return_value=MagicMock()),
         ):
             from api.main import app as _app
 
@@ -1195,7 +1200,7 @@ def test_pack_run_endpoint_exists_for_research_analysis(
     patch both __init__ (no-op) and run() so no real LLM or LangGraph call
     is made.
     """
-    from domain_packs.research_analysis.pack import ResearchAnalysisPack
+    from domain_packs.research.research_analysis.pack import ResearchAnalysisPack
 
     def _noop_init(self, **kwargs):  # type: ignore[override]
         pass
@@ -1234,7 +1239,7 @@ def test_pack_run_endpoint_exists_for_research_only(
     mock_research_result: ResearchResult,
 ) -> None:
     """POST /packs/research_only/run must return 200 with research output fields."""
-    from domain_packs.research_only.pack import ResearchOnlyPack
+    from domain_packs.research.research_only.pack import ResearchOnlyPack
 
     def _noop_init(self, **kwargs):  # type: ignore[override]
         pass
@@ -1257,8 +1262,8 @@ def test_pack_run_endpoint_exists_for_research_only(
 
 def test_pack_run_endpoint_exists_for_summariser(test_client: TestClient) -> None:
     """POST /packs/summariser/run must return 200 with bullet summary fields."""
-    from domain_packs.summariser.pack import SummariserPack
-    from domain_packs.summariser.schemas import SummaryOutput
+    from domain_packs.productivity.summariser.pack import SummariserPack
+    from domain_packs.productivity.summariser.schemas import SummaryOutput
 
     mock_output = SummaryOutput(original_length=42, bullets=["a", "b", "c"])
 
@@ -1286,7 +1291,7 @@ def test_pack_run_endpoint_exists_for_analysis_only(
     mock_analysis_report: AnalysisReport,
 ) -> None:
     """POST /packs/analysis_only/run must return 200 with analysis output fields."""
-    from domain_packs.analysis_only.pack import AnalysisOnlyPack
+    from domain_packs.research.analysis_only.pack import AnalysisOnlyPack
 
     def _noop_init(self, **kwargs):  # type: ignore[override]
         pass
@@ -1339,7 +1344,7 @@ def test_pack_run_returns_x_pack_version_used_header(
     mock_analysis_report: MagicMock,
 ) -> None:
     """POST /packs/research_analysis/run must return x-pack-version-used header."""
-    from domain_packs.research_analysis.pack import ResearchAnalysisPack
+    from domain_packs.research.research_analysis.pack import ResearchAnalysisPack
 
     def _noop_init(self, **kwargs):  # type: ignore[override]
         pass
@@ -1363,7 +1368,7 @@ def test_pack_run_with_x_pack_version_header(
     mock_analysis_report: MagicMock,
 ) -> None:
     """POST /packs/research_analysis/run with X-Pack-Version: 1.0 returns x-pack-version-used: 1.0."""
-    from domain_packs.research_analysis.pack import ResearchAnalysisPack
+    from domain_packs.research.research_analysis.pack import ResearchAnalysisPack
 
     def _noop_init(self, **kwargs):  # type: ignore[override]
         pass

@@ -211,9 +211,9 @@ class TestAPIEndToEnd:
 
         with (
             override_legacy_pack_cls(mock_graph_cls),
-            patch("api.main._rate_limiter", permissive_limiter),
-            patch("api.main.get_shared_llm", return_value=mock_llm),
-            patch("api.main.get_shared_checkpointer", return_value=mock_checkpointer),
+            patch("api.state.rate_limiter", permissive_limiter),
+            patch("api.state.get_shared_llm", return_value=mock_llm),
+            patch("api.state.get_shared_checkpointer", return_value=mock_checkpointer),
         ):
             from fastapi.testclient import TestClient
 

@@ -6,8 +6,8 @@ import pytest
 
 from control_plane.enforce import validate_pack_body
 from core.security import InputValidator
-from domain_packs.contract_reviewer.schemas import ContractReviewerInput
-from domain_packs.support_triage.schemas import SupportTriageInput
+from domain_packs.legal.contract_reviewer.schemas import ContractReviewerInput
+from domain_packs.productivity.support_triage.schemas import SupportTriageInput
 
 
 def test_validate_pack_body_rejects_oversized_document_field() -> None:

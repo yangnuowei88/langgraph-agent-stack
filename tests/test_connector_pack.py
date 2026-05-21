@@ -10,7 +10,7 @@ import pytest
 
 from agents.researcher import ResearchResult
 from connectors.examples.example_connector import ExampleMemoryConnector
-from domain_packs.research_analysis.pack import ResearchAnalysisPack
+from domain_packs.research.research_analysis.pack import ResearchAnalysisPack
 
 
 @pytest.fixture()

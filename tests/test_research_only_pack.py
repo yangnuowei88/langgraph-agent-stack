@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 from agents.researcher import ResearchResult
-from domain_packs.research_only.pack import ResearchOnlyPack
+from domain_packs.research.research_only.pack import ResearchOnlyPack
 
 
 def test_research_only_run_returns_research_result() -> None:
