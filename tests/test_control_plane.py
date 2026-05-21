@@ -19,6 +19,14 @@ def test_default_policies_registered() -> None:
     assert "research_only" in policies
     assert "summariser" in policies
     assert "analysis_only" in policies
+    assert "talent_screening" in policies
+
+
+def test_talent_screening_policy_requires_human_review() -> None:
+    policy = PolicyRegistry.get("talent_screening")
+    assert policy is not None
+    assert policy.human_review_required is True
+    assert policy.compliance_disclaimer
 
 
 def test_effective_budget_prefers_global_setting() -> None:

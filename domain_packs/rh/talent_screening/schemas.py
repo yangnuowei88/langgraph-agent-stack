@@ -20,4 +20,12 @@ class TalentScreeningOutput(BaseModel):
     red_flags: list[str]
     summary_for_hiring_manager: str
     confidence: float = Field(ge=0.0, le=1.0)
+    human_review_required: bool = Field(
+        default=True,
+        description="Always true — output is assistive only, not a hiring decision.",
+    )
+    disclaimer: str = Field(
+        default="",
+        description="Mandatory compliance disclaimer (injected server-side).",
+    )
     cost_usd: float | None = None

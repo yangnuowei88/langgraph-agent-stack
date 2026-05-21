@@ -20,4 +20,12 @@ class ContractReviewerOutput(BaseModel):
     recommended_actions: list[str]
     summary: str
     confidence: float = Field(ge=0.0, le=1.0)
+    human_review_required: bool = Field(
+        default=True,
+        description="Always true — not legal advice; attorney review required.",
+    )
+    disclaimer: str = Field(
+        default="",
+        description="Mandatory compliance disclaimer (injected server-side).",
+    )
     cost_usd: float | None = None

@@ -10,3 +10,5 @@ from __future__ import annotations
 from pack_kernel.builtin_packs import register_builtin_packs
 
 register_builtin_packs()
+
+import control_plane  # noqa: E402, F401 — registers PolicyRegistry policies

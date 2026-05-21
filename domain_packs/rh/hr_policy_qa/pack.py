@@ -39,6 +39,6 @@ class HrPolicyQaPack(StructuredLLMPack):
             output_schema_json=schema,
             closing_instructions=(
                 "Set question from input. escalate_to_hr=true for legal/sensitive topics. "
-                "disclaimer must state this is informational, not legal advice."
+                "disclaimer and human_review_required are set server-side — do not omit."
             ),
         )

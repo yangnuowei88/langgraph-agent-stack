@@ -9,6 +9,9 @@ Pack-level policies are registered explicitly in `control_plane/__init__.py` (Ap
 | `max_query_chars` | `validate_query_for_pack()` — used by API before pack and legacy runs |
 | `budget_usd_ceiling` | `effective_budget_usd()` — passed as `budget_usd` when constructing packs (overridden by `PACK_DEFAULT_BUDGET_USD`) |
 | `stream_timeout_seconds` | `effective_stream_timeout_seconds()` — caps SSE timeouts per pack route and legacy `/run/stream` |
+| `human_review_required` | `domain_packs.common.compliance.apply_compliance_output()` — injects mandatory `disclaimer` + `human_review_required` on regulated pack outputs |
+
+Regulated packs (HR, contract review, financial memo) set `human_review_required=True`. See each pack's `COMPLIANCE.md`.
 
 ## Registry
 

@@ -26,13 +26,18 @@ class ExecutionConstraints:
 
 @dataclass(frozen=True, slots=True)
 class PackPolicy:
-    """Associates a registered ``pack_id`` with constraints and opaque governance labels.
+    """Associates a registered ``pack_id`` with constraints and governance metadata.
 
     Compatible with the static ``PackRegistry``: ``pack_id`` must match a registered
     pack when policies are applied for real (validated elsewhere in a future sprint).
+
+    When ``human_review_required`` is true, regulated packs must surface a mandatory
+    ``disclaimer`` on every output (enforced in ``domain_packs.common.compliance``).
     """
 
     pack_id: str
     constraints: ExecutionConstraints = field(default_factory=ExecutionConstraints)
     labels: frozenset[str] = field(default_factory=frozenset)
+    human_review_required: bool = False
+    compliance_disclaimer: str | None = None
     extensions: dict[str, Any] = field(default_factory=dict)

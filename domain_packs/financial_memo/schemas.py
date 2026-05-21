@@ -21,4 +21,12 @@ class FinancialMemoOutput(BaseModel):
     risks: list[str]
     next_steps: list[str]
     confidence: float = Field(ge=0.0, le=1.0)
+    human_review_required: bool = Field(
+        default=True,
+        description="Always true — not financial advice; professional review required.",
+    )
+    disclaimer: str = Field(
+        default="",
+        description="Mandatory compliance disclaimer (injected server-side).",
+    )
     cost_usd: float | None = None

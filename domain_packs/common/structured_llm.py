@@ -33,6 +33,7 @@ from core.config import get_settings
 from core.memory import create_checkpointer
 from core.observability import trace_span
 from core.security import InputValidator
+from domain_packs.common.compliance import apply_compliance_output
 from pack_kernel.base_pack import BaseDomainPack
 
 logger = logging.getLogger(__name__)
@@ -139,6 +140,7 @@ class StructuredLLMPack(BaseDomainPack):
     ) -> BaseModel:
         """Parse LLM text into ``output_schema`` (default: JSON extraction)."""
         data = extract_json_object(raw)
+        data = apply_compliance_output(cls.pack_id, data)
         return cls.output_schema.model_validate(data)
 
     @classmethod

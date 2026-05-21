@@ -17,5 +17,12 @@ class HrPolicyQaOutput(BaseModel):
     citations: list[str]
     confidence: float = Field(ge=0.0, le=1.0)
     escalate_to_hr: bool
-    disclaimer: str
+    human_review_required: bool = Field(
+        default=True,
+        description="Always true — answers are informational, not binding HR/legal advice.",
+    )
+    disclaimer: str = Field(
+        default="",
+        description="Mandatory compliance disclaimer (injected server-side).",
+    )
     cost_usd: float | None = None

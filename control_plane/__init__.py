@@ -13,79 +13,94 @@ from control_plane.enforce import (
 )
 from control_plane.policies import ExecutionConstraints, PackPolicy
 from control_plane.registry import PolicyRegistry
+from domain_packs.common.compliance import (
+    CONTRACT_REVIEWER_DISCLAIMER,
+    FINANCIAL_MEMO_DISCLAIMER,
+    HR_POLICY_QA_DISCLAIMER,
+    JOB_DESCRIPTION_WRITER_DISCLAIMER,
+    TALENT_SCREENING_DISCLAIMER,
+)
 
-_BUILTIN_POLICIES: tuple[tuple[str, ExecutionConstraints, frozenset[str]], ...] = (
-    (
-        "research_analysis",
-        ExecutionConstraints(max_query_chars=2000),
-        frozenset({"default", "full-pipeline"}),
+_BUILTIN_POLICIES: tuple[PackPolicy, ...] = (
+    PackPolicy(
+        pack_id="research_analysis",
+        constraints=ExecutionConstraints(max_query_chars=2000),
+        labels=frozenset({"default", "full-pipeline"}),
     ),
-    (
-        "research_only",
-        ExecutionConstraints(max_query_chars=2000),
-        frozenset({"research-only"}),
+    PackPolicy(
+        pack_id="research_only",
+        constraints=ExecutionConstraints(max_query_chars=2000),
+        labels=frozenset({"research-only"}),
     ),
-    (
-        "summariser",
-        ExecutionConstraints(max_query_chars=4000),
-        frozenset({"single-agent", "summarise"}),
+    PackPolicy(
+        pack_id="summariser",
+        constraints=ExecutionConstraints(max_query_chars=4000),
+        labels=frozenset({"single-agent", "summarise"}),
     ),
-    (
-        "analysis_only",
-        ExecutionConstraints(max_query_chars=2000),
-        frozenset({"analysis-only"}),
+    PackPolicy(
+        pack_id="analysis_only",
+        constraints=ExecutionConstraints(max_query_chars=2000),
+        labels=frozenset({"analysis-only"}),
     ),
-    (
-        "meeting_prep",
-        ExecutionConstraints(max_query_chars=2000),
-        frozenset({"sales", "meeting-prep"}),
+    PackPolicy(
+        pack_id="meeting_prep",
+        constraints=ExecutionConstraints(max_query_chars=2000),
+        labels=frozenset({"sales", "meeting-prep"}),
     ),
-    (
-        "rfp_assistant",
-        ExecutionConstraints(max_query_chars=500),
-        frozenset({"sales", "rfp", "rag"}),
+    PackPolicy(
+        pack_id="rfp_assistant",
+        constraints=ExecutionConstraints(max_query_chars=500),
+        labels=frozenset({"sales", "rfp", "rag"}),
     ),
-    (
-        "support_triage",
-        ExecutionConstraints(max_query_chars=8000),
-        frozenset({"support", "single-agent"}),
+    PackPolicy(
+        pack_id="support_triage",
+        constraints=ExecutionConstraints(max_query_chars=8000),
+        labels=frozenset({"support", "single-agent"}),
     ),
-    (
-        "executive_brief",
-        ExecutionConstraints(max_query_chars=20000),
-        frozenset({"executive", "summarise"}),
+    PackPolicy(
+        pack_id="executive_brief",
+        constraints=ExecutionConstraints(max_query_chars=20000),
+        labels=frozenset({"executive", "summarise"}),
     ),
-    (
-        "contract_reviewer",
-        ExecutionConstraints(max_query_chars=500),
-        frozenset({"legal", "rag"}),
+    PackPolicy(
+        pack_id="contract_reviewer",
+        constraints=ExecutionConstraints(max_query_chars=500),
+        labels=frozenset({"legal", "rag", "regulated"}),
+        human_review_required=True,
+        compliance_disclaimer=CONTRACT_REVIEWER_DISCLAIMER,
     ),
-    (
-        "financial_memo",
-        ExecutionConstraints(max_query_chars=2000),
-        frozenset({"finance", "strategy"}),
+    PackPolicy(
+        pack_id="financial_memo",
+        constraints=ExecutionConstraints(max_query_chars=2000),
+        labels=frozenset({"finance", "strategy", "regulated"}),
+        human_review_required=True,
+        compliance_disclaimer=FINANCIAL_MEMO_DISCLAIMER,
     ),
-    (
-        "talent_screening",
-        ExecutionConstraints(max_query_chars=10000),
-        frozenset({"hr", "recruiting"}),
+    PackPolicy(
+        pack_id="talent_screening",
+        constraints=ExecutionConstraints(max_query_chars=10000),
+        labels=frozenset({"hr", "recruiting", "regulated"}),
+        human_review_required=True,
+        compliance_disclaimer=TALENT_SCREENING_DISCLAIMER,
     ),
-    (
-        "job_description_writer",
-        ExecutionConstraints(max_query_chars=2000),
-        frozenset({"hr", "recruiting"}),
+    PackPolicy(
+        pack_id="job_description_writer",
+        constraints=ExecutionConstraints(max_query_chars=2000),
+        labels=frozenset({"hr", "recruiting", "regulated"}),
+        human_review_required=True,
+        compliance_disclaimer=JOB_DESCRIPTION_WRITER_DISCLAIMER,
     ),
-    (
-        "hr_policy_qa",
-        ExecutionConstraints(max_query_chars=2000),
-        frozenset({"hr", "rag"}),
+    PackPolicy(
+        pack_id="hr_policy_qa",
+        constraints=ExecutionConstraints(max_query_chars=2000),
+        labels=frozenset({"hr", "rag", "regulated"}),
+        human_review_required=True,
+        compliance_disclaimer=HR_POLICY_QA_DISCLAIMER,
     ),
 )
 
-for _pack_id, _constraints, _labels in _BUILTIN_POLICIES:
-    PolicyRegistry.register(
-        PackPolicy(pack_id=_pack_id, constraints=_constraints, labels=_labels)
-    )
+for _policy in _BUILTIN_POLICIES:
+    PolicyRegistry.register(_policy)
 
 __all__ = [
     "ExecutionConstraints",

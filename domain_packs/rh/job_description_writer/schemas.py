@@ -20,4 +20,12 @@ class JobDescriptionWriterOutput(BaseModel):
     screening_rubric: list[str]
     bias_check_notes: list[str]
     confidence: float = Field(ge=0.0, le=1.0)
+    human_review_required: bool = Field(
+        default=True,
+        description="Always true — JD must be human-approved before posting.",
+    )
+    disclaimer: str = Field(
+        default="",
+        description="Mandatory compliance disclaimer (injected server-side).",
+    )
     cost_usd: float | None = None
