@@ -99,7 +99,12 @@ from core.observability import (
     server_shutting_down,
     set_request_id,
 )
-from core.security import InputValidator, create_rate_limiter
+from core.security import (
+    InputValidator,
+    create_rate_limiter,
+    rate_limit_client_key,
+    resolve_client_ip,
+)
 
 configure_logging(level=get_settings().log_level.value)
 logger = logging.getLogger(__name__)
@@ -129,6 +134,31 @@ _shared_connector: Any = None  # optional BaseConnector when CONNECTOR_ENABLED
 _rate_limiter: Any = None
 _input_validator = InputValidator(max_length=2000)
 _shutting_down = threading.Event()
+
+
+def _request_peer_host(request: Request) -> str | None:
+    return request.client.host if request.client else None
+
+
+def _request_client_ip(request: Request) -> str:
+    settings = get_settings()
+    return resolve_client_ip(
+        _request_peer_host(request),
+        request.headers,
+        trust_proxy=settings.trust_proxy_headers,
+        forwarded_allow_ips=settings.forwarded_allow_ips,
+    )
+
+
+def _rate_limit_key(request: Request) -> str:
+    settings = get_settings()
+    return rate_limit_client_key(
+        _request_peer_host(request),
+        request.headers,
+        trust_proxy=settings.trust_proxy_headers,
+        forwarded_allow_ips=settings.forwarded_allow_ips,
+        api_key=settings.api_key,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -908,7 +938,7 @@ async def auth_middleware(request: Request, call_next: Any) -> Any:
             "Auth failed",
             extra={
                 "path": request.url.path,
-                "client": request.client.host if request.client else "unknown",
+                "client": _request_client_ip(request),
             },
         )
         return JSONResponse(
@@ -927,21 +957,28 @@ async def auth_middleware(request: Request, call_next: Any) -> Any:
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next: Any) -> Any:
     """
-    Enforce a per-IP sliding-window rate limit on all incoming requests.
+    Enforce a sliding-window rate limit on all incoming requests.
 
-    The ``/health`` and ``/ready`` endpoints are excluded so Kubernetes
-    liveness and readiness probes are never blocked.
-    When a client exceeds the limit a ``429 Too Many Requests`` response is
-    returned immediately without forwarding the request to any handler.
+    Keys are scoped per Bearer token when ``API_KEY`` auth is enabled, else
+    per client IP.  Behind a trusted reverse proxy, set ``TRUST_PROXY_HEADERS``
+    and ``FORWARDED_ALLOW_IPS`` so ``X-Forwarded-For`` is used instead of the
+    load-balancer address.
+
+    The ``/health``, ``/ready``, and ``/metrics`` endpoints are excluded so
+    Kubernetes probes are never blocked.
     """
     if request.url.path in {"/health", "/ready", "/metrics"}:
         return await call_next(request)
 
-    client_ip: str = request.client.host if request.client else "unknown"
-    if _rate_limiter is not None and not _rate_limiter.is_allowed(client_ip):
+    limit_key = _rate_limit_key(request)
+    if _rate_limiter is not None and not _rate_limiter.is_allowed(limit_key):
         logger.warning(
             "Rate limit exceeded",
-            extra={"client": client_ip, "path": request.url.path},
+            extra={
+                "client": _request_client_ip(request),
+                "limit_key": limit_key,
+                "path": request.url.path,
+            },
         )
         return Response(
             content='{"detail":"Rate limit exceeded. Please slow down."}',
@@ -978,7 +1015,7 @@ async def log_requests(request: Request, call_next: Any) -> Any:
             "request_id": request_id,
             "method": request.method,
             "path": request.url.path,
-            "client": request.client.host if request.client else "unknown",
+            "client": _request_client_ip(request),
         },
     )
 

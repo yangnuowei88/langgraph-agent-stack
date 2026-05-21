@@ -21,3 +21,5 @@ data:
   OLLAMA_BASE_URL: {{ .Values.llm.ollamaBaseUrl | quote }}
   OLLAMA_MODEL: {{ .Values.llm.ollamaModel | quote }}
   RATE_LIMIT_BACKEND: {{ .Values.config.rateLimitBackend | default "memory" | quote }}
+  TRUST_PROXY_HEADERS: {{ .Values.config.trustProxyHeaders | default false | quote }}
+  FORWARDED_ALLOW_IPS: {{ .Values.config.forwardedAllowIps | default "" | quote }}

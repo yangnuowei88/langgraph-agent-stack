@@ -14,6 +14,8 @@ import pytest
 from core.security import (
     InputValidator,
     RateLimiter,
+    rate_limit_client_key,
+    resolve_client_ip,
     sanitize_log_data,
     validate_api_key_format,
 )
@@ -179,6 +181,68 @@ class TestRateLimiter:
         """window_seconds <= 0 must raise ValueError at construction."""
         with pytest.raises(ValueError):
             RateLimiter(max_requests=10, window_seconds=0.0)
+
+
+# ---------------------------------------------------------------------------
+# Proxy-aware client IP / rate-limit keys
+# ---------------------------------------------------------------------------
+
+
+class TestProxyAwareClientIp:
+    """Tests for resolve_client_ip() and rate_limit_client_key()."""
+
+    def test_xff_used_when_peer_is_trusted(self) -> None:
+        headers = {"X-Forwarded-For": "203.0.0.1, 10.0.0.5"}
+        assert (
+            resolve_client_ip(
+                "10.0.0.5",
+                headers,
+                trust_proxy=True,
+                forwarded_allow_ips="10.0.0.0/8",
+            )
+            == "203.0.0.1"
+        )
+
+    def test_xff_ignored_when_peer_not_trusted(self) -> None:
+        headers = {"X-Forwarded-For": "203.0.0.1"}
+        assert (
+            resolve_client_ip(
+                "203.0.0.1",
+                headers,
+                trust_proxy=True,
+                forwarded_allow_ips="10.0.0.0/8",
+            )
+            == "203.0.0.1"
+        )
+
+    def test_rate_limit_key_uses_token_when_auth_enabled(self) -> None:
+        headers = {"Authorization": "Bearer tenant-secret-token"}
+        key_a = rate_limit_client_key(
+            "10.0.0.1",
+            headers,
+            trust_proxy=False,
+            forwarded_allow_ips="",
+            api_key="server-api-key",
+        )
+        key_b = rate_limit_client_key(
+            "10.0.0.2",
+            headers,
+            trust_proxy=False,
+            forwarded_allow_ips="",
+            api_key="server-api-key",
+        )
+        assert key_a == key_b
+        assert key_a.startswith("token:")
+
+    def test_rate_limit_key_falls_back_to_ip_without_bearer(self) -> None:
+        key = rate_limit_client_key(
+            "10.0.0.9",
+            {},
+            trust_proxy=False,
+            forwarded_allow_ips="",
+            api_key="server-api-key",
+        )
+        assert key == "ip:10.0.0.9"
 
 
 # ---------------------------------------------------------------------------

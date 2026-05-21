@@ -104,4 +104,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
 # Default command — override via docker run / k8s deployment args if needed
 # Use "python -m" so the venv's python is used regardless of script shebangs
 # (shebangs bake the builder-stage path which differs from runtime).
-CMD ["python", "-m", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# FORWARDED_ALLOW_IPS is read by the app (TRUST_PROXY_HEADERS) and passed to
+# uvicorn --forwarded-allow-ips when set (K8s Ingress / ALB deployments).
+ENV FORWARDED_ALLOW_IPS=""
+CMD ["sh", "-c", "exec python -m uvicorn api.main:app --host 0.0.0.0 --port 8000 ${FORWARDED_ALLOW_IPS:+--forwarded-allow-ips=$FORWARDED_ALLOW_IPS}"]

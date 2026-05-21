@@ -262,6 +262,26 @@ class Settings(BaseSettings):
         ),
     )
 
+    trust_proxy_headers: bool = Field(
+        default=False,
+        validation_alias="TRUST_PROXY_HEADERS",
+        description=(
+            "When true, honour X-Forwarded-For / Forwarded for client IP "
+            "resolution and rate limiting, but only if the direct TCP peer "
+            "matches FORWARDED_ALLOW_IPS."
+        ),
+    )
+
+    forwarded_allow_ips: str = Field(
+        default="",
+        validation_alias="FORWARDED_ALLOW_IPS",
+        description=(
+            "Comma-separated IPs/CIDRs of trusted reverse proxies (Ingress, "
+            "ALB, GCP LB). Required when TRUST_PROXY_HEADERS=true. Also passed "
+            "to uvicorn --forwarded-allow-ips in the container entrypoint."
+        ),
+    )
+
     @property
     def llm_config(self) -> LLMConfig:
         """Build an :class:`~core.llm.LLMConfig` from the current settings."""

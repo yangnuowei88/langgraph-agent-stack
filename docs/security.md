@@ -130,17 +130,29 @@ Never expose port 8000 directly to the public internet without TLS.
 
 ### Rate limit tuning
 
-The default rate limit (60 req/min per IP) may be too permissive or too strict
-depending on your traffic profile. Adjust the `RateLimiter` constructor call in
-`api/main.py`:
+The default rate limit (60 req/min per client) may be too permissive or too strict
+depending on your traffic profile. Limits are enforced in ``api/main.py`` via
+``create_rate_limiter()`` (``RATE_LIMIT_BACKEND=redis`` for multi-replica).
 
-```python
-_rate_limiter = RateLimiter(max_requests=20, window_seconds=60.0)
+**Behind Kubernetes Ingress / a load balancer**, enable proxy trust so clients are
+not all bucketed under the LB IP:
+
+```yaml
+# infra/helm/langgraph-agent-stack/values.prod.yaml
+config:
+  trustProxyHeaders: true
+  forwardedAllowIps: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"  # adjust to your cluster
 ```
 
-For production workloads with multiple replicas, replace the in-memory limiter
-with a Redis-backed implementation (e.g. `slowapi` with Redis storage) so limits
-are enforced across all pods.
+Environment equivalents: ``TRUST_PROXY_HEADERS=true`` and
+``FORWARDED_ALLOW_IPS``. The container entrypoint passes the same CIDR list to
+``uvicorn --forwarded-allow-ips``.
+
+When ``API_KEY`` is set, authenticated requests are rate-limited **per Bearer
+token**; anonymous requests remain **per IP**.
+
+For production workloads with multiple replicas, use ``RATE_LIMIT_BACKEND=redis``
+so limits are enforced across all pods.
 
 ---
 
@@ -370,24 +382,24 @@ resources:
 
 ### Rate Limiting
 
-The default rate limiter (`core/security.RateLimiter`) is in-memory and
-per-process. It is suitable for single-replica deployments and development.
+Built-in sliding-window rate limiting lives in ``core/security.py`` and is wired
+in ``api/main.py``. Backends:
 
-For multi-replica production deployments the in-memory limiter does not share
-state across pods. Replace it with a distributed implementation. The
-`slowapi` library integrates naturally with FastAPI and supports Redis storage:
+| ``RATE_LIMIT_BACKEND`` | Behaviour |
+|---|---|
+| ``memory`` (default) | Per-process buckets — fine for single replica / dev |
+| ``redis`` | Shared buckets across pods — **required for HPA** |
 
-```bash
-uv add slowapi redis
-```
+Client identity for the limiter:
 
-```python
-from slowapi import Limiter
-from slowapi.util import get_remote_address
+1. **Authenticated** (``API_KEY`` set + ``Authorization: Bearer …``): one bucket
+   per token (tenant isolation).
+2. **Otherwise**: one bucket per client IP. With ``TRUST_PROXY_HEADERS=true`` and
+   ``FORWARDED_ALLOW_IPS`` matching your Ingress/LB, the IP is taken from
+   ``X-Forwarded-For`` (left-most hop) instead of the load-balancer address.
 
-limiter = Limiter(key_func=get_remote_address, storage_uri="redis://redis:6379/0")
-app.state.limiter = limiter
-```
+Never set ``TRUST_PROXY_HEADERS`` without a restrictive ``FORWARDED_ALLOW_IPS`` —
+otherwise clients can spoof ``X-Forwarded-For``.
 
 ### Input Validation
 

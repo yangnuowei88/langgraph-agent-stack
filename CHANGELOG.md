@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Platform kernel renamed to `pack_kernel/`** — the former top-level `platform/` package shadowed Python's stdlib `platform` module (required fragile `conftest.py` bootstrap and a `sys.path` scan hack). All imports now use `pack_kernel`; the old `platform/` path is removed (no compat shim — any shim would still shadow the stdlib).
+- **Proxy-aware rate limiting** — honour `X-Forwarded-For` / `Forwarded` only from trusted peers (`TRUST_PROXY_HEADERS`, `FORWARDED_ALLOW_IPS`); per-Bearer-token buckets when `API_KEY` is set; Helm prod values and uvicorn `--forwarded-allow-ips` documented.
 - `api/main.py` — injects shared connector into any pack whose `__init__` accepts `connector=` (not only `research_analysis`).
 - `control_plane/__init__.py` — policy table covers all registered packs.
 

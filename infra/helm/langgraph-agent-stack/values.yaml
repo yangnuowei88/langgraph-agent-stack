@@ -38,6 +38,12 @@ config:
   sqlitePath: /app/data/memory.db
   maxTokens: "4096"
   rateLimitBackend: "memory"  # "redis" requis pour multi-replica (partage l'état entre pods)
+  # Derrière un Ingress/LB : activer la confiance proxy pour que le rate limit
+  # utilise l'IP réelle du client (X-Forwarded-For), pas l'IP du load balancer.
+  trustProxyHeaders: false
+  # CIDRs des proxies de confiance (Ingress controller, ALB, GCP LB…).
+  # Exemple RFC1918 — ajuster au CIDR du plan de pods/services de votre cluster.
+  forwardedAllowIps: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
 
 # PersistentVolume for /app/data (default sqlitePath).  With memoryBackend=sqlite,
 # this stores both checkpoints and run history.  With redis/postgres, checkpoints

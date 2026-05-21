@@ -348,6 +348,70 @@ def test_rate_limiting_on_research() -> None:
     assert 429 in statuses, "Expected at least one 429 Too Many Requests response"
 
 
+def test_rate_limiting_isolated_per_xff_client() -> None:
+    """With trusted proxy settings, each X-Forwarded-For client gets its own bucket."""
+    from core.config import Settings
+    from core.security import RateLimiter
+
+    tight_limiter = RateLimiter(max_requests=2, window_seconds=60.0)
+    proxy_settings = Settings(
+        llm_provider="anthropic",
+        anthropic_api_key="sk-ant-test123456789012345",
+        trust_proxy_headers=True,
+        forwarded_allow_ips="10.0.0.0/8",
+        api_key=None,
+    )
+
+    mock_graph_instance = MagicMock()
+    mock_graph_instance.run.return_value = MagicMock(
+        query="q",
+        executive_summary="s",
+        key_insights=[],
+        patterns=[],
+        implications=[],
+        confidence=0.5,
+        research_summary="r",
+        metadata={},
+    )
+    mock_graph_instance.__enter__ = MagicMock(return_value=mock_graph_instance)
+    mock_graph_instance.__exit__ = MagicMock(return_value=False)
+    mock_graph_cls = MagicMock(return_value=mock_graph_instance)
+
+    with (
+        patch("api.main.MultiAgentGraph", mock_graph_cls),
+        patch("api.main._rate_limiter", tight_limiter),
+        patch("api.main.get_settings", return_value=proxy_settings),
+        patch("api.main._request_peer_host", return_value="10.0.0.1"),
+        patch("api.main.get_shared_llm", return_value=MagicMock(spec=True)),
+        patch("api.main.get_shared_checkpointer", return_value=MagicMock()),
+    ):
+        from api.main import app
+
+        with TestClient(app, raise_server_exceptions=False) as client:
+            for _ in range(2):
+                assert (
+                    client.post(
+                        "/run",
+                        json={"query": "q1"},
+                        headers={"X-Forwarded-For": "198.51.100.10"},
+                    ).status_code
+                    == 200
+                )
+            blocked = client.post(
+                "/run",
+                json={"query": "q2"},
+                headers={"X-Forwarded-For": "198.51.100.10"},
+            )
+            other = client.post(
+                "/run",
+                json={"query": "q3"},
+                headers={"X-Forwarded-For": "198.51.100.99"},
+            )
+
+    assert blocked.status_code == 429
+    assert other.status_code == 200
+
+
 # ---------------------------------------------------------------------------
 # Security headers
 # ---------------------------------------------------------------------------

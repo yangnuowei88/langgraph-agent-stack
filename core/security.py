@@ -29,11 +29,15 @@ All public functions and classes carry complete type hints and docstrings.
 
 from __future__ import annotations
 
+import hashlib
+import ipaddress
 import logging
 import re
 import threading
 import time
 from collections import deque
+from collections.abc import Mapping
+from functools import lru_cache
 from typing import Any, Literal, Protocol, cast, runtime_checkable
 
 logger = logging.getLogger(__name__)
@@ -163,6 +167,133 @@ class InputValidator:
 
 
 # ---------------------------------------------------------------------------
+# Client IP / rate-limit key resolution (proxy-aware)
+# ---------------------------------------------------------------------------
+
+
+@lru_cache(maxsize=32)
+def _forwarded_allow_networks(
+    spec: str,
+) -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
+    """Parse a comma-separated list of IPs/CIDRs for trusted reverse proxies."""
+    networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
+    for raw in spec.split(","):
+        entry = raw.strip()
+        if not entry:
+            continue
+        if "/" not in entry:
+            entry = f"{entry}/32" if ":" not in entry else f"{entry}/128"
+        networks.append(ipaddress.ip_network(entry, strict=False))
+    return tuple(networks)
+
+
+def _peer_is_trusted(peer_host: str | None, forwarded_allow_ips: str) -> bool:
+    """Return True when the direct TCP peer is a trusted reverse proxy."""
+    if not peer_host or not forwarded_allow_ips.strip():
+        return False
+    try:
+        peer = ipaddress.ip_address(peer_host)
+    except ValueError:
+        return False
+    return any(
+        peer in network for network in _forwarded_allow_networks(forwarded_allow_ips)
+    )
+
+
+def _first_xff_ip(xff: str) -> str | None:
+    """Return the left-most (client) IP from an X-Forwarded-For header."""
+    if not xff.strip():
+        return None
+    candidate = xff.split(",")[0].strip()
+    try:
+        ipaddress.ip_address(candidate)
+    except ValueError:
+        return None
+    return candidate
+
+
+def _forwarded_header_ip(forwarded: str) -> str | None:
+    """Extract the client IP from an RFC 7239 Forwarded header (first ``for=``)."""
+    for part in forwarded.split(","):
+        for directive in part.split(";"):
+            directive = directive.strip()
+            if not directive.lower().startswith("for="):
+                continue
+            value = directive[4:].strip().strip('"')
+            if value.lower() == "unknown":
+                continue
+            if value.startswith("[") and "]" in value:
+                value = value[1 : value.index("]")]
+            try:
+                ipaddress.ip_address(value)
+            except ValueError:
+                continue
+            return value
+    return None
+
+
+def resolve_client_ip(
+    peer_host: str | None,
+    headers: Mapping[str, str],
+    *,
+    trust_proxy: bool,
+    forwarded_allow_ips: str,
+) -> str:
+    """Return the best-effort client IP for logging and rate limiting.
+
+    ``X-Forwarded-For`` / ``Forwarded`` are honoured only when ``trust_proxy``
+    is enabled **and** the direct peer matches ``forwarded_allow_ips``.
+    """
+    if not peer_host:
+        return "unknown"
+
+    if trust_proxy and _peer_is_trusted(peer_host, forwarded_allow_ips):
+        for key in ("x-forwarded-for", "X-Forwarded-For"):
+            if key in headers:
+                xff_ip = _first_xff_ip(headers[key])
+                if xff_ip:
+                    return xff_ip
+        for key in ("forwarded", "Forwarded"):
+            if key in headers:
+                fwd_ip = _forwarded_header_ip(headers[key])
+                if fwd_ip:
+                    return fwd_ip
+
+    return peer_host
+
+
+def rate_limit_client_key(
+    peer_host: str | None,
+    headers: Mapping[str, str],
+    *,
+    trust_proxy: bool,
+    forwarded_allow_ips: str,
+    api_key: str | None,
+) -> str:
+    """Build a sliding-window bucket key for the rate limiter.
+
+    When ``API_KEY`` auth is enabled and a Bearer token is present, the limit
+    is scoped per token (tenant). Otherwise the limit is scoped per client IP
+    (using proxy-aware IP resolution when configured).
+    """
+    if api_key:
+        auth = headers.get("authorization") or headers.get("Authorization") or ""
+        if auth.lower().startswith("bearer "):
+            token = auth[7:].strip()
+            if token:
+                digest = hashlib.sha256(token.encode()).hexdigest()[:16]
+                return f"token:{digest}"
+
+    client_ip = resolve_client_ip(
+        peer_host,
+        headers,
+        trust_proxy=trust_proxy,
+        forwarded_allow_ips=forwarded_allow_ips,
+    )
+    return f"ip:{client_ip}"
+
+
+# ---------------------------------------------------------------------------
 # RateLimiter — interface + implementations
 # ---------------------------------------------------------------------------
 
@@ -182,12 +313,12 @@ class RateLimiterBackend(Protocol):
 
 class RateLimiter:
     """
-    Simple in-memory sliding-window rate limiter keyed by client IP.
+    Simple in-memory sliding-window rate limiter keyed by client identifier.
 
-    Uses a ``deque`` per IP to track the timestamps of recent requests within
-    the rolling window.  Timestamps older than ``window_seconds`` are pruned on
-    every check, so memory usage stays bounded even under sustained load from a
-    single IP.
+    Uses a ``deque`` per key (IP, token fingerprint, etc.) to track the timestamps
+    of recent requests within the rolling window.  Timestamps older than
+    ``window_seconds`` are pruned on every check, so memory usage stays bounded
+    even under sustained load from a single client.
 
     Thread-safe via a per-instance ``threading.Lock``.
 
