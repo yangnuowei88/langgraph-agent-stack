@@ -2,7 +2,7 @@
 pack_kernel — Platform kernel for the LangGraph agent stack.
 
 Import ``BaseDomainPack`` / ``PackRegistry`` from here. Built-in packs are
-registered explicitly via ``register_builtin_packs()`` (see ``api/main.py``
+registered explicitly via ``register_builtin_packs()`` (see ``api/lifespan.py``
 and root ``conftest.py``) — not as a side effect of importing this package.
 """
 

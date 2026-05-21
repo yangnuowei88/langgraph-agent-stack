@@ -1,4 +1,4 @@
-"""domain_packs/rh/talent_screening/pack.py — CV vs job description screening pack."""
+"""domain_packs/hr/talent_screening/pack.py — CV vs job description screening pack."""
 
 from __future__ import annotations
 

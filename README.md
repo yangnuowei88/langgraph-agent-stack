@@ -55,12 +55,12 @@ Client → FastAPI (auth · rate limit · validation)
 
 | Layer | Path | Role |
 |-------|------|------|
-| HTTP | `api/` | FastAPI app, middlewares, legacy + pack routes |
+| HTTP | `api/` | FastAPI app (`app.py`), middlewares, endpoints, pack router factory |
 | Kernel | `pack_kernel/` | `BaseDomainPack`, `PackRegistry`, versioning, traffic split |
-| Workflows | `domain_packs/` | Built-in and vertical packs — see [domain_packs/README.md](domain_packs/README.md) |
+| Workflows | `domain_packs/` | Packs grouped by domain — see [domain_packs/README.md](domain_packs/README.md) |
 | Agents | `agents/` | Reusable LangGraph agents (`ResearchAgent`, `AnalystAgent`, …) |
 | Policies | `control_plane/` | Per-pack limits (query size, budget, stream timeout) — [control_plane/README.md](control_plane/README.md) |
-| Connectors | `connectors/` + `core/connectors.py` | Retrieval adapters — [connectors/README.md](connectors/README.md) |
+| Connectors | `connectors/` | Retrieval adapters — [connectors/README.md](connectors/README.md) (`core/connectors.py` is a compat shim) |
 | Foundation | `core/` | Config, LLM factory, memory, security, cost, observability |
 | Ops | `infra/` | Dockerfile, Compose, Helm, Terraform |
 
@@ -72,9 +72,11 @@ Client → FastAPI (auth · rate limit · validation)
 
 | Category | Examples |
 |----------|----------|
-| Core pipelines | `research_analysis`, `research_only`, `analysis_only`, `summariser` |
-| Vertical workflows | `meeting_prep`, `rfp_assistant`, `support_triage`, `executive_brief`, `contract_reviewer`, `financial_memo` |
-| HR (`domain_packs/rh/`) | `talent_screening`, `job_description_writer`, `hr_policy_qa` |
+| Research (`domain_packs/research/`) | `research_analysis`, `research_only`, `analysis_only` |
+| Productivity (`domain_packs/productivity/`) | `summariser`, `meeting_prep`, `rfp_assistant`, `support_triage`, `executive_brief` |
+| HR (`domain_packs/hr/`) | `talent_screening`, `job_description_writer`, `hr_policy_qa` |
+| Finance (`domain_packs/finance/`) | `financial_memo` |
+| Legal (`domain_packs/legal/`) | `contract_reviewer` |
 
 Each pack gets typed `POST /packs/{pack_id}/run` and `/run/stream` when schemas are declared. Versioning, traffic weights, and sticky sessions: `GET /packs`, `GET /packs/{id}/versions`, headers `X-Pack-Version` / `X-Pack-Version-Used`.
 
@@ -153,9 +155,9 @@ Contributor workflow, pre-commit, and PR expectations: **[CONTRIBUTING.md](CONTR
 
 ```
 langgraph-agent-stack/
-├── api/                 # FastAPI application
+├── api/                 # FastAPI (app.py, middleware, endpoints, router_factory)
 ├── pack_kernel/         # Pack contract + PackRegistry
-├── domain_packs/        # Workflows (core + vertical + rh/)
+├── domain_packs/        # research/, productivity/, hr/, finance/, legal/, common/
 ├── agents/              # Reusable LangGraph agents
 ├── connectors/          # Retrieval connector implementations
 ├── control_plane/       # Pack policies
@@ -163,7 +165,7 @@ langgraph-agent-stack/
 ├── infra/               # Dockerfile, compose, helm/, terraform/
 ├── examples/            # LangGraph pattern demos
 ├── tests/
-├── docs/                # security.md, …
+├── docs/                # security.md, architecture.md, …
 └── scripts/             # infra-devsecops.sh, …
 ```
 

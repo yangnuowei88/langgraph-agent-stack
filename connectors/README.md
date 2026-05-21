@@ -24,7 +24,7 @@ Keep imports **local** to the pack module to avoid loading unused backends at AP
 
 ### Wired in this repository
 
-`ResearchAnalysisPack` (`domain_packs/research_analysis/pack.py`) accepts an optional `connector=` constructor argument. During the research graph node, it calls `fetch()` and merges records into `ResearchResult.findings` and `metadata["connector"]`.
+`ResearchAnalysisPack` (`domain_packs/research/research_analysis/pack.py`) accepts an optional `connector=` constructor argument. During the research graph node, it calls `fetch()` and merges records into `ResearchResult.findings` and `metadata["connector"]`.
 
 **API (production):** set in `.env`:
 
@@ -33,7 +33,7 @@ CONNECTOR_ENABLED=true
 CONNECTOR_ID=example_memory
 ```
 
-The FastAPI lifespan resolves the connector via `core/connectors.py` and passes it into every `research_analysis` pack instance (`POST /run`, `/packs/research_analysis/run`, and stream routes). Other packs (e.g. `research_only`) are unaffected.
+The FastAPI lifespan resolves the connector via `connectors/resolver.py` and passes it into pack instances whose constructor accepts `connector=` (`api/dependencies.py` → `pack_runtime_kwargs`). This includes `research_analysis` and several vertical packs (e.g. `rfp_assistant`, `contract_reviewer`, `hr_policy_qa`).
 
 See `connectors/examples/example_connector.py`, `tests/test_connector_pack.py`, and `tests/test_api_connector.py`.
 
@@ -42,6 +42,7 @@ See `connectors/examples/example_connector.py`, `tests/test_connector_pack.py`, 
 | Path | Role |
 |------|------|
 | `base.py` | `ConnectorRequest`, `ConnectorResult`, `BaseConnector` |
+| `resolver.py` | Built-in connector ids and factory (`core/connectors.py` is a compat shim) |
 | `examples/example_connector.py` | Runnable stub for docs/tests |
 
 ## Minimalism rationale

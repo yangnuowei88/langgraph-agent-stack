@@ -1,4 +1,4 @@
-"""domain_packs/rh/talent_screening/schemas.py — Typed I/O for TalentScreeningPack."""
+"""domain_packs/hr/talent_screening/schemas.py — Typed I/O for TalentScreeningPack."""
 
 from __future__ import annotations
 

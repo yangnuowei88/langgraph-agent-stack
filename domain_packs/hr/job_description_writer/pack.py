@@ -1,4 +1,4 @@
-"""domain_packs/rh/job_description_writer/pack.py — Inclusive job description writer."""
+"""domain_packs/hr/job_description_writer/pack.py — Inclusive job description writer."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""domain_packs/rh/job_description_writer/schemas.py — JobDescriptionWriter I/O."""
+"""domain_packs/hr/job_description_writer/schemas.py — JobDescriptionWriter I/O."""
 
 from __future__ import annotations
 

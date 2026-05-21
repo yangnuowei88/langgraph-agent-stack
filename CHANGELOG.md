@@ -7,18 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **API package split** — monolithic `api/main.py` refactored into `api/app.py`, `lifespan.py`, `middleware.py`, `dependencies.py`, `router_factory.py`, and `api/endpoints/*`.
+- **Domain packs namespaced by business domain** — `domain_packs/research/`, `productivity/`, `hr/`, `finance/`, `legal/`, `common/` (HR packs moved from `domain_packs/rh/` to `domain_packs/hr/`).
+- **Built-in pack registration** — consolidated in `pack_kernel/builtin_packs.py` (called from `api/lifespan.py`).
+- Documentation updated for the new layout (`README.md`, `domain_packs/README.md`, `docs/architecture.md`, `CONTRIBUTING.md`, `connectors/README.md`).
+
 ### Added
 - **Third and fourth domain packs** — `summariser` (`SummariserPack`, single-agent bullet summary) and `analysis_only` (`AnalysisOnlyPack`, AnalystAgent on pre-supplied research). Registered in `platform/__init__.py` with control-plane policies and typed API routes (`POST /packs/summariser/run`, `POST /packs/analysis_only/run`).
 - **`domain_packs/README.md`** — catalogue of built-in packs and authoring guide.
 - API helpers `_pack_primary_text`, `_invoke_pack_run`, `_iter_pack_stream_events`, `_serialize_pack_result` so typed bodies with `text` (not only `query`) work on pack routes.
-- **Nine vertical domain packs** — `meeting_prep`, `rfp_assistant`, `support_triage`, `executive_brief`, `contract_reviewer`, `financial_memo`, plus HR packs under `domain_packs/rh/`: `talent_screening`, `job_description_writer`, `hr_policy_qa`. Shared base: `domain_packs/common/structured_llm.py` (`StructuredLLMPack`).
+- **Nine vertical domain packs** — `meeting_prep`, `rfp_assistant`, `support_triage`, `executive_brief`, `contract_reviewer`, `financial_memo`, plus HR packs under `domain_packs/hr/`: `talent_screening`, `job_description_writer`, `hr_policy_qa`. Shared base: `domain_packs/common/structured_llm.py` (`StructuredLLMPack`).
 - **`pack_kernel/builtin_packs.py`** — single registration source for all built-in packs.
 
 ### Changed
 - **Platform kernel renamed to `pack_kernel/`** — the former top-level `platform/` package shadowed Python's stdlib `platform` module (required fragile `conftest.py` bootstrap and a `sys.path` scan hack). All imports now use `pack_kernel`; the old `platform/` path is removed (no compat shim — any shim would still shadow the stdlib).
 - **Proxy-aware rate limiting** — honour `X-Forwarded-For` / `Forwarded` only from trusted peers (`TRUST_PROXY_HEADERS`, `FORWARDED_ALLOW_IPS`); per-Bearer-token buckets when `API_KEY` is set; Helm prod values and uvicorn `--forwarded-allow-ips` documented.
 - **Regulated vertical pack compliance scaffolding** — `PackPolicy.human_review_required`, server-injected mandatory `disclaimer` + `human_review_required` on outputs for HR/legal/finance packs; `COMPLIANCE.md` per regulated pack; `tests/test_compliance.py`.
-- `api/main.py` — injects shared connector into any pack whose `__init__` accepts `connector=` (not only `research_analysis`).
+- `api/dependencies.py` — injects shared connector into any pack whose `__init__` accepts `connector=` (not only `research_analysis`).
 - `control_plane/__init__.py` — policy table covers all registered packs.
 
 ### Security

@@ -101,7 +101,7 @@ out of the box in development. In production, restrict this to your frontend's
 origin:
 
 ```python
-# api/main.py — replace the wildcard
+# api/app.py — replace the wildcard
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["https://your-frontend.example.com"],
@@ -162,8 +162,8 @@ Never expose port 8000 directly to the public internet without TLS.
 ### Rate limit tuning
 
 The default rate limit (60 req/min per client) may be too permissive or too strict
-depending on your traffic profile. Limits are enforced in ``api/main.py`` via
-``create_rate_limiter()`` (``RATE_LIMIT_BACKEND=redis`` for multi-replica).
+depending on your traffic profile. Limits are enforced in ``api/middleware.py`` via
+``create_rate_limiter()`` from ``core/security.py`` (``RATE_LIMIT_BACKEND=redis`` for multi-replica).
 
 **Behind Kubernetes Ingress / a load balancer**, enable proxy trust so clients are
 not all bucketed under the LB IP:
@@ -417,7 +417,7 @@ resources:
 ### Rate Limiting
 
 Built-in sliding-window rate limiting lives in ``core/security.py`` and is wired
-in ``api/main.py``. Backends:
+in ``api/middleware.py`` (limiter created in ``api/lifespan.py``). Backends:
 
 | ``RATE_LIMIT_BACKEND`` | Behaviour |
 |---|---|

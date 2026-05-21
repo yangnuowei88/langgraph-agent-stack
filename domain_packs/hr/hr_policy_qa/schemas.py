@@ -1,4 +1,4 @@
-"""domain_packs/rh/hr_policy_qa/schemas.py — Typed I/O for HrPolicyQaPack."""
+"""domain_packs/hr/hr_policy_qa/schemas.py — Typed I/O for HrPolicyQaPack."""
 
 from __future__ import annotations
 

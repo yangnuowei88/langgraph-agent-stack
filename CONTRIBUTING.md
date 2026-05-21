@@ -210,16 +210,16 @@ Branch names must be lowercase with hyphens — no underscores, no uppercase.
 ## Adding a New Agent
 
 1. Create `agents/my_agent.py` inheriting from `BaseAgent` in `agents/base_agent.py`. Implement `build_graph()`, `run()`, and optionally `run_structured()`.
-2. Integrate the agent into the LangGraph for your pipeline — typically by editing the domain pack under `domain_packs/<your_pack>/pack.py` (for the built-in pipeline, `domain_packs/research_analysis/pack.py`). Avoid adding orchestration to `core/graph.py`; it aliases `ResearchAnalysisPack` for backward compatibility only.
-3. For a **new** domain pack: subclass `BaseDomainPack`, register it in `pack_kernel/builtin_packs.py` via `PackRegistry.register`, and optionally provide `input_schema` / `output_schema` for typed REST routes.
-4. Expose standalone behavior via a new endpoint in `api/main.py` (see `/research`) or rely on registry-driven pack routes when registered.
+2. Integrate the agent into the LangGraph for your pipeline — typically by editing the domain pack under `domain_packs/<domain>/<pack_id>/pack.py` (for the built-in pipeline, `domain_packs/research/research_analysis/pack.py`). Avoid adding orchestration to `core/graph.py`; it aliases `ResearchAnalysisPack` for backward compatibility only.
+3. For a **new** domain pack: subclass `BaseDomainPack`, register it in `pack_kernel/builtin_packs.py`, and optionally provide `input_schema` / `output_schema` for typed REST routes.
+4. Expose standalone behavior via a new endpoint under `api/endpoints/` (see `api/endpoints/research.py`) or rely on registry-driven pack routes from `api/router_factory.py`.
 5. Add tests under `tests/` (unit tests for the agent; pack contract tests if you extend `PackRegistry`).
 
-See `domain_packs/research_only/` for a minimal second-pack example already registered in `pack_kernel/builtin_packs.py`.
+See `domain_packs/research/research_only/` for a minimal second-pack example already registered in `pack_kernel/builtin_packs.py`.
 
 ### Optional retrieval connector
 
-When `CONNECTOR_ENABLED=true`, the API injects the connector resolved from `CONNECTOR_ID` into **`research_analysis`** pack instances only. To test locally without the API, pass `connector=...` to `ResearchAnalysisPack(...)`. Built-in ids are defined in `core/connectors.py`.
+When `CONNECTOR_ENABLED=true`, the API injects the connector resolved from `CONNECTOR_ID` into any pack whose constructor accepts `connector=` (see `api/dependencies.py` → `pack_runtime_kwargs`). To test locally without the API, pass `connector=...` to `ResearchAnalysisPack(...)`. Built-in ids are defined in `connectors/resolver.py` (`core/connectors.py` is a compat shim).
 
 ## Reporting Issues
 

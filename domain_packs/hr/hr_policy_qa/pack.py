@@ -1,4 +1,4 @@
-"""domain_packs/rh/hr_policy_qa/pack.py — HR handbook / policy Q&A pack."""
+"""domain_packs/hr/hr_policy_qa/pack.py — HR handbook / policy Q&A pack."""
 
 from __future__ import annotations
 
