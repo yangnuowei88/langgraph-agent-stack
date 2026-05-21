@@ -14,6 +14,7 @@ default, what requires operator configuration, and how to report vulnerabilities
 5. [Kubernetes Hardening](#5-kubernetes-hardening)
 6. [Rate Limiting and Input Validation](#6-rate-limiting-and-input-validation)
 7. [Automated Security Scanning](#7-automated-security-scanning)
+   - [Before going to production (Checkov)](#before-going-to-production-checkov)
 8. [Supply Chain (SBOM & Image Signing)](#8-supply-chain-sbom--image-signing)
 9. [Reporting Vulnerabilities](#9-reporting-vulnerabilities)
 
@@ -489,6 +490,97 @@ syft packages langgraph-agent-stack:local -o spdx-json > sbom.spdx.json
 brew install trivy
 trivy image --severity HIGH,CRITICAL langgraph-agent-stack:local
 ```
+
+### Before going to production (Checkov)
+
+The repository ships **two Checkov profiles**:
+
+| Profile | Config file | Used by | Purpose |
+|---|---|---|---|
+| **Template / CI** | `.checkov.yaml` | `make infra-check`, CI `infra-lint` job | Passes on stub Terraform modules and chart defaults |
+| **Production gate** | `.checkov.prod.yaml` | `make infra-check-prod` | Re-enables cloud hardening checks before real deploys |
+
+The template profile skips **~50 cloud Terraform policies** (AWS EKS, Azure AKS, GCP GKE) with the rationale *“harden in production tfvars”*. That keeps CI green on illustrative modules, but a fork that copies the template and runs `terraform apply` without hardening can silently deploy non-compliant infrastructure (public cluster endpoints, missing audit logging, permissive IAM, etc.).
+
+**The vanilla template is expected to fail `make infra-check-prod`.** Treat a green prod gate as a release criterion for your hardened fork, not for the upstream template itself.
+
+#### Pre-production checklist
+
+1. **Harden Terraform** for your cloud (`infra/terraform/{eks,aks,gke}/` + module tfvars): private API endpoints, control-plane / audit logging, secrets encryption, least-privilege IAM, VPC flow logs, authorized networks, supported Kubernetes versions.
+2. **Harden Helm prod overlay** (`infra/helm/langgraph-agent-stack/values.prod.yaml`): pin image **digest** (`@sha256:…`), confirm `pullPolicy: Always`, enable `networkPolicy`, set `secrets.existingSecret`, configure ingress TLS and resource limits.
+3. **Install prerequisites** called out in modules (e.g. [External Secrets Operator](#3-secret-management) before applying GKE `ClusterSecretStore` / `ExternalSecret` manifests).
+4. **Run the prod gate locally**:
+
+   ```bash
+   make infra-check-prod
+   ```
+
+5. **Fix every failed check** or document a narrow, reviewed exception in your fork (prefer fixing Terraform/Helm over adding new skips).
+6. **Wire the prod gate into your deploy pipeline** (optional): run `CHECKOV_CONFIG=.checkov.prod.yaml make infra-check` on the production branch before `terraform apply` / Helm promote.
+
+#### Kubernetes checks re-enabled in the prod profile
+
+These skips exist in `.checkov.yaml` but **not** in `.checkov.prod.yaml` — your prod overlay must satisfy them:
+
+| Check | Policy (summary) | Prod action |
+|---|---|---|
+| `CKV_K8S_43` | Container image should use digest, not mutable tag | Pin `image@sha256:…` in CD |
+| `CKV_K8S_15` | `imagePullPolicy: Always` | Set in `values.prod.yaml` |
+| `CKV2_K8S_6` | NetworkPolicy restricts pod traffic | Enable `networkPolicy` in prod values |
+
+Remaining prod skips (`CKV_K8S_35`, `CKV_K8S_37`, `CKV_K8S_40`) are intentional workload choices (envFrom secrets, non-root UID 1001).
+
+#### Cloud Terraform checks skipped in template CI (re-enabled in prod)
+
+Fix or justify each item in your production Terraform before apply.
+
+**AWS (EKS module — `infra/terraform/modules/eks/`)**
+
+| Check | Policy |
+|---|---|
+| `CKV2_AWS_11` | VPC flow logging enabled |
+| `CKV2_AWS_12` | Default security group restricts all traffic |
+| `CKV2_AWS_19` | EIPs allocated to VPC are attached to instances |
+| `CKV2_AWS_35` | NAT Gateway used for default route |
+| `CKV2_AWS_40` | IAM policies do not grant full IAM privileges |
+| `CKV2_AWS_44` | VPC peering routes not overly permissive |
+| `CKV2_AWS_56` | Managed `IAMFullAccess` policy not used |
+| `CKV_AWS_37` | EKS control plane logging enabled (all types) |
+| `CKV_AWS_38` | EKS public endpoint not open to `0.0.0.0/0` |
+| `CKV_AWS_39` | EKS public endpoint disabled (prefer private) |
+| `CKV_AWS_58` | EKS secrets encryption enabled |
+| `CKV_AWS_100` | EKS node group: no SSH from `0.0.0.0/0` |
+| `CKV_AWS_130` | Subnets do not auto-assign public IPs |
+| `CKV_AWS_339` | EKS runs a supported Kubernetes version |
+| `CKV_AWS_41` | No hard-coded AWS keys in provider |
+| `CKV_AWS_60`–`CKV_AWS_63` | IAM least privilege (assume role, admin `*`, star actions) |
+| `CKV_AWS_274` | No `AdministratorAccess` attachments |
+| `CKV_AWS_286`–`CKV_AWS_290` | IAM: no privilege escalation / credential exposure / unconstrained write |
+| `CKV_AWS_355` | IAM: no `*` resource for restrictable actions |
+
+**Azure (AKS module — `infra/terraform/modules/aks/`)**
+
+| Checks | Theme |
+|---|---|
+| `CKV_AZURE_4`–`CKV_AZURE_8` | AKS API access, network profile, RBAC |
+| `CKV_AZURE_115`–`CKV_AZURE_117` | Storage account encryption / public access |
+| `CKV_AZURE_141`, `CKV_AZURE_143` | Key Vault soft-delete / purge protection |
+| `CKV_AZURE_168`–`CKV_AZURE_172` | Diagnostic / audit logging |
+| `CKV_AZURE_226`, `CKV_AZURE_227`, `CKV_AZURE_232`, `CKV_AZURE_246` | Network security (NSG, private endpoints) |
+| `CKV2_AZURE_29` | Storage accounts restrict public network access |
+
+**GCP (GKE root — `infra/terraform/gke/`)**
+
+| Checks | Theme |
+|---|---|
+| `CKV_GCP_1`, `CKV_GCP_8` | GCS bucket public access / uniform access |
+| `CKV_GCP_7` | Legacy ABAC disabled on GKE |
+| `CKV_GCP_12`, `CKV_GCP_13`, `CKV_GCP_18` | GKE private cluster / master authorized networks |
+| `CKV_GCP_20`–`CKV_GCP_25` | Node pool hardening (shielded nodes, metadata, scopes) |
+| `CKV_GCP_61`, `CKV_GCP_64`–`CKV_GCP_71`, `CKV_GCP_123` | Logging, monitoring, binary authorization, release channel |
+| `CKV2_GCP_19` | GKE private nodes / control-plane exposure |
+
+For the exact rule text, run `checkov --list` or see the [Checkov policy index](https://www.checkov.io/5.Policy%20Index/terraform.html).
 
 ---
 

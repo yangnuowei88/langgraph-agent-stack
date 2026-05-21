@@ -1,5 +1,10 @@
 # Checkov policy configuration — infra DevSecOps (CI + scripts/infra-devsecops.sh)
 # https://www.checkov.io/2.Basics/Suppressing%20and%20Skipping%20Policies.html
+#
+# Template / CI profile: cloud Terraform checks are skipped so `make infra-check`
+# passes on stub modules. Before production, run the stricter profile:
+#   make infra-check-prod   (uses .checkov.prod.yaml)
+# See docs/security.md §7 — "Before going to production (Checkov)".
 
 quiet: true
 compact: true

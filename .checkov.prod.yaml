@@ -1,0 +1,23 @@
+# Checkov production gate — stricter than .checkov.yaml (template CI profile).
+#
+# Use before applying Terraform or promoting Helm to a real production environment:
+#   CHECKOV_CONFIG=.checkov.prod.yaml make infra-check
+#   make infra-check-prod
+#
+# Differences from .checkov.yaml:
+#   - All cloud Terraform skips are REMOVED (AWS / Azure / GCP checks run).
+#   - Kubernetes skips that prod overlays should satisfy are REMOVED
+#     (image digest, imagePullPolicy Always, NetworkPolicy).
+#   - Only intentional, documented workload choices remain suppressed.
+#
+# The vanilla template is expected to FAIL this profile until modules/tfvars
+# are hardened — see docs/security.md §7 "Before going to production".
+
+quiet: true
+compact: true
+
+skip-check:
+  # --- Intentional workload choices (prod and dev) ---
+  - CKV_K8S_35  # secrets via envFrom — standard with ESO / existingSecret
+  - CKV_K8S_37  # UID 1001 — non-root appuser from Dockerfile
+  - CKV_K8S_40  # same policy family as CKV_K8S_37 (high UID)

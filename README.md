@@ -240,7 +240,7 @@ The runtime image copies `api/`, `core/`, `agents/`, `pack_kernel/`, `domain_pac
 
 The chart lives in `infra/helm/langgraph-agent-stack/`. It requires Helm 3 and a running Kubernetes cluster.
 
-CI validates infrastructure with Checkov (Terraform + Helm), kubeconform, and kube-linter on rendered manifests — locally: `make infra-check` (see `scripts/infra-devsecops.sh`).
+CI validates infrastructure with Checkov (Terraform + Helm), kubeconform, and kube-linter on rendered manifests — locally: `make infra-check` (see `scripts/infra-devsecops.sh`). Before production, run the stricter gate: `make infra-check-prod` (see [docs/security.md §7](docs/security.md#before-going-to-production-checkov)).
 
 ### Install
 
@@ -758,7 +758,8 @@ make docker-down   # Stop and remove all containers
 
 # Helm
 make helm-lint     # Lint the Helm chart
-make infra-check   # DevSecOps: checkov + kubeconform + kube-linter (infra/ CI job)
+make infra-check       # DevSecOps: checkov (template) + kubeconform + kube-linter
+make infra-check-prod  # Stricter Checkov prod gate — see docs/security.md
 make helm-dev      # Deploy to dev environment
 make helm-prod     # Deploy to production environment
 make helm-dry-run  # Simulate a Helm install

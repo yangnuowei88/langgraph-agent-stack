@@ -85,8 +85,11 @@ docker-smoke: ## Run Docker smoke test (build + /health + /docs + non-root)
 helm-lint: ## Lint the Helm chart for errors
 	helm lint $(HELM_CHART)
 
-infra-check: ## Helm/Terraform DevSecOps (checkov, kubeconform, kube-linter)
+infra-check: ## Helm/Terraform DevSecOps (checkov template profile, kubeconform, kube-linter)
 	CHECKOV_CMD="uv tool run checkov" bash scripts/infra-devsecops.sh
+
+infra-check-prod: ## Stricter Checkov prod gate (.checkov.prod.yaml — expect failures on vanilla template)
+	CHECKOV_CMD="uv tool run checkov" CHECKOV_CONFIG="$(CURDIR)/.checkov.prod.yaml" bash scripts/infra-devsecops.sh
 
 helm-dev: ## Deploy to the dev environment via Helm
 	helm upgrade --install langgraph $(HELM_CHART) \

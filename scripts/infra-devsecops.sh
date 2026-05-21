@@ -16,6 +16,7 @@
 #   KUBE_LINTER_VERSION  (default: v0.7.1)
 #   K8S_VERSION          (default: 1.31.0)
 #   CHECKOV_CMD          (default: checkov — use "uv tool run checkov" locally)
+#   CHECKOV_CONFIG       (default: .checkov.yaml — use .checkov.prod.yaml for prod gate)
 
 set -euo pipefail
 
@@ -27,6 +28,7 @@ KUBECONFORM_VERSION="${KUBECONFORM_VERSION:-v0.6.7}"
 KUBE_LINTER_VERSION="${KUBE_LINTER_VERSION:-v0.7.1}"
 K8S_VERSION="${K8S_VERSION:-1.31.0}"
 CHECKOV_CMD="${CHECKOV_CMD:-checkov}"
+CHECKOV_CONFIG="${CHECKOV_CONFIG:-${ROOT}/.checkov.yaml}"
 CRD_SCHEMA_LOCATION="https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"
 
 mkdir -p "${RENDER_DIR}" "${BIN_DIR}"
@@ -74,13 +76,13 @@ echo "[infra-devsecops] kube-linter (default + prod)"
 kube-linter lint "${RENDER_DIR}/default.yaml"
 kube-linter lint "${RENDER_DIR}/prod.yaml"
 
-echo "[infra-devsecops] checkov — Terraform"
-${CHECKOV_CMD} -d "${ROOT}/infra/terraform" --framework terraform --config-file "${ROOT}/.checkov.yaml"
+echo "[infra-devsecops] checkov — Terraform (${CHECKOV_CONFIG})"
+${CHECKOV_CMD} -d "${ROOT}/infra/terraform" --framework terraform --config-file "${CHECKOV_CONFIG}"
 
-echo "[infra-devsecops] checkov — Helm chart"
-${CHECKOV_CMD} -d "${HELM_CHART}" --framework helm --config-file "${ROOT}/.checkov.yaml"
+echo "[infra-devsecops] checkov — Helm chart (${CHECKOV_CONFIG})"
+${CHECKOV_CMD} -d "${HELM_CHART}" --framework helm --config-file "${CHECKOV_CONFIG}"
 
-echo "[infra-devsecops] checkov — rendered prod Kubernetes manifests"
-${CHECKOV_CMD} -f "${RENDER_DIR}/prod.yaml" --framework kubernetes --config-file "${ROOT}/.checkov.yaml"
+echo "[infra-devsecops] checkov — rendered prod Kubernetes manifests (${CHECKOV_CONFIG})"
+${CHECKOV_CMD} -f "${RENDER_DIR}/prod.yaml" --framework kubernetes --config-file "${CHECKOV_CONFIG}"
 
 echo "[infra-devsecops] All infra DevSecOps checks passed."
