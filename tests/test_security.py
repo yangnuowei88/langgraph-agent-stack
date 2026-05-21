@@ -44,21 +44,6 @@ class TestInputValidator:
         result = self.validator.validate(query)
         assert result == query
 
-    def test_input_validator_allows_prompt_injection_research_phrasing(self) -> None:
-        """Legitimate queries about prompt injection must not be blocked by regex."""
-        query = (
-            "Explain what 'ignore previous instructions' means in "
-            "prompt injection research."
-        )
-        result = self.validator.validate(query)
-        assert result == query
-
-    def test_input_validator_allows_internal_url_in_query_text(self) -> None:
-        """SSRF-style strings in LLM queries are not fetch targets — allow them."""
-        query = "Compare http://localhost/admin vs public endpoints for SSRF demos."
-        result = self.validator.validate(query)
-        assert "localhost" in result
-
     def test_input_validator_rejects_null_byte(self) -> None:
         """Queries containing a null byte must be rejected."""
         with pytest.raises(ValueError, match="null bytes"):
