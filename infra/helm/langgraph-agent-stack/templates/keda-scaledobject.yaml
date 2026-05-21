@@ -1,0 +1,23 @@
+{{- if and .Values.autoscaling.enabled (eq .Values.autoscaling.metric "keda") }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "langgraph-agent-stack.fullname" . }}
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    {{- include "langgraph-agent-stack.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    name: {{ include "langgraph-agent-stack.fullname" . }}
+  minReplicaCount: {{ .Values.autoscaling.minReplicas }}
+  maxReplicaCount: {{ .Values.autoscaling.maxReplicas }}
+  pollingInterval: {{ .Values.keda.pollingInterval }}
+  cooldownPeriod: {{ .Values.keda.cooldownPeriod }}
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: {{ .Values.keda.prometheusServerAddress | quote }}
+        metricName: active_pipelines_avg_per_pod
+        query: {{ include "langgraph-agent-stack.kedaPrometheusQuery" . | quote }}
+        threshold: {{ .Values.keda.activePipelinesThreshold | quote }}
+{{- end }}

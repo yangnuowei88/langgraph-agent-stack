@@ -20,13 +20,32 @@ resources:
 
 autoscaling:
   enabled: true
+  metric: keda
   maxReplicas: 10
+
+keda:
+  prometheusServerAddress: http://prometheus-operated.monitoring.svc:9090
+  activePipelinesThreshold: "3"
+
+serviceMonitor:
+  enabled: true
 
 persistence:
   enabled: false  # prod utilise Redis ou Postgres
 
 networkPolicy:
   enabled: true
+
+topologySpreadConstraints:
+  enabled: true
+  constraints:
+    - maxSkew: 1
+      topologyKey: topology.kubernetes.io/zone
+      whenUnsatisfiable: ScheduleAnyway
+
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1  # at most one voluntary eviction during node drain / cluster upgrade
 
 secrets:
   existingSecret: langgraph-secrets

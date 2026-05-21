@@ -38,7 +38,24 @@ spec:
         checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
         {{- end }}
     spec:
+      automountServiceAccountToken: false
       serviceAccountName: {{ include "langgraph-agent-stack.serviceAccountName" . }}
+
+      {{- if .Values.topologySpreadConstraints.enabled }}
+      topologySpreadConstraints:
+        {{- range .Values.topologySpreadConstraints.constraints }}
+        - maxSkew: {{ .maxSkew }}
+          topologyKey: {{ .topologyKey | quote }}
+          whenUnsatisfiable: {{ .whenUnsatisfiable }}
+          labelSelector:
+            matchLabels:
+              {{- include "langgraph-agent-stack.selectorLabels" $ | nindent 14 }}
+              app.kubernetes.io/component: api
+          {{- if .minDomains }}
+          minDomains: {{ .minDomains }}
+          {{- end }}
+        {{- end }}
+      {{- end }}
 
       securityContext:
         runAsNonRoot: {{ .Values.podSecurityContext.runAsNonRoot }}

@@ -7,8 +7,14 @@ metadata:
   labels:
     {{- include "langgraph-agent-stack.labels" . | nindent 4 }}
 spec:
+  {{- if .Values.podDisruptionBudget.maxUnavailable }}
+  maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
+  {{- else }}
   minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  {{- end }}
+  unhealthyPodEvictionPolicy: AlwaysAllow
   selector:
     matchLabels:
       {{- include "langgraph-agent-stack.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
 {{- end }}

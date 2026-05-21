@@ -10,7 +10,7 @@ FROM python:3.12.13-slim AS builder
 # Prevent Python from writing .pyc files and enable unbuffered stdout/stderr
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    UV_VERSION=0.5.21
+    UV_VERSION=0.11.15
 
 # Install uv from the official installer (no pip, no poetry)
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
@@ -63,10 +63,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     VIRTUAL_ENV=/app/.venv \
     PATH="/app/.venv/bin:$PATH"
 
-# Install curl for HEALTHCHECK; upgrade base OS packages for Trivy/CVE fixes
+# Upgrade base OS packages for Trivy/CVE fixes (no curl — health check uses httpx in venv)
 RUN apt-get update \
     && apt-get upgrade -y --no-install-recommends \
-    && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Create a non-root user and group
@@ -99,7 +98,7 @@ EXPOSE 8000
 
 # Container-level health check — fails fast if the API stops responding
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
+    CMD python -c "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"
 
 # Default command — override via docker run / k8s deployment args if needed
 # Use "python -m" so the venv's python is used regardless of script shebangs

@@ -1,4 +1,4 @@
-{{- if .Values.autoscaling.enabled }}
+{{- if and .Values.autoscaling.enabled (ne .Values.autoscaling.metric "keda") }}
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -6,6 +6,12 @@ metadata:
   namespace: {{ .Values.namespace.name }}
   labels:
     {{- include "langgraph-agent-stack.labels" . | nindent 4 }}
+  {{- if eq .Values.autoscaling.metric "cpu" }}
+  annotations:
+    langgraph-agent-stack/scaling-warning: >-
+      CPU-based HPA is a poor signal for LLM workloads (I/O-bound, low CPU under load).
+      Prefer autoscaling.metric=keda on active_pipelines.
+  {{- end }}
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
@@ -14,10 +20,24 @@ spec:
   minReplicas: {{ .Values.autoscaling.minReplicas }}
   maxReplicas: {{ .Values.autoscaling.maxReplicas }}
   metrics:
+    {{- if eq .Values.autoscaling.metric "cpu" }}
     - type: Resource
       resource:
         name: cpu
         target:
           type: Utilization
           averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
+    {{- else if eq .Values.autoscaling.metric "active_pipelines" }}
+    - type: External
+      external:
+        metric:
+          name: {{ .Values.autoscaling.prometheus.metricName }}
+          selector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "langgraph-agent-stack.name" . }}
+              app.kubernetes.io/instance: {{ .Release.Name }}
+        target:
+          type: AverageValue
+          averageValue: {{ .Values.autoscaling.prometheus.averageValue | quote }}
+    {{- end }}
 {{- end }}

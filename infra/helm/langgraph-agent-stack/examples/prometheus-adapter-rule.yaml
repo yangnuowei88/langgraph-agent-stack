@@ -1,0 +1,20 @@
+# Example rule for prometheus-adapter when using autoscaling.metric=active_pipelines
+# (native HPA external metrics). Prefer KEDA (autoscaling.metric=keda) — no adapter rule needed.
+#
+# Apply to the prometheus-adapter ConfigMap (adjust namespace/name for your cluster):
+#   kubectl edit configmap prometheus-adapter -n monitoring
+#
+# Requires ServiceMonitor enabled so Prometheus scrapes /metrics (active_pipelines gauge).
+
+rules:
+  - seriesQuery: 'active_pipelines{namespace!="",pod!=""}'
+    resources:
+      overrides:
+        namespace:
+          resource: namespace
+        pod:
+          resource: pod
+    name:
+      matches: "^active_pipelines$"
+      as: "active_pipelines"
+    metricsQuery: 'avg(<<.Series>>{<<.LabelMatchers>>})'

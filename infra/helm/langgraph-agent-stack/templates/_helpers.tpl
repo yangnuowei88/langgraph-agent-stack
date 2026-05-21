@@ -51,6 +51,19 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
+PromQL: average active agent pipelines per pod for this release.
+Prometheus Operator adds pod/namespace labels at scrape time.
+Tune threshold to ~0.75–0.9 × THREAD_POOL_MAX_WORKERS (default 4 → threshold 3).
+*/}}
+{{- define "langgraph-agent-stack.kedaPrometheusQuery" -}}
+{{- if .Values.keda.activePipelinesQuery -}}
+{{- .Values.keda.activePipelinesQuery -}}
+{{- else -}}
+avg(active_pipelines{namespace="{{ .Values.namespace.name }}",pod=~"{{ include "langgraph-agent-stack.fullname" . }}-.*"})
+{{- end -}}
+{{- end -}}
+
+{{/*
 Create the name of the service account to use
 */}}
 {{- define "langgraph-agent-stack.serviceAccountName" -}}

@@ -1,7 +1,12 @@
 LangGraph Agent Stack — Post-Install Notes
 
-WARNING: Default config uses SQLite (replicaCount=1).
+WARNING: Default config uses SQLite (replicaCount=1) and ENVIRONMENT=development.
     SQLite only supports a single writer.
+
+For production, use the prod overlay (requires API_KEY via Secret):
+  helm upgrade {{ .Release.Name }} . \
+    -f values.prod.yaml \
+    --set secrets.existingSecret=your-secret
 
 To scale horizontally, use Redis:
   helm upgrade {{ .Release.Name }} . \

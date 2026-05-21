@@ -27,11 +27,33 @@ autoscaling:
   enabled: false
   minReplicas: 2
   maxReplicas: 10
-  targetCPUUtilizationPercentage: 80
+  # Scaling backend — LLM workloads are I/O-bound; CPU stays low while pods are saturated.
+  #   keda              — recommended: KEDA Prometheus trigger on active_pipelines gauge
+  #   active_pipelines  — HPA external metric (requires prometheus-adapter; see examples/)
+  #   cpu               — NOT recommended: mis-scales on concurrent LLM calls
+  metric: keda
+  targetCPUUtilizationPercentage: 80  # only when metric=cpu
+  prometheus:
+    metricName: active_pipelines
+    # Target avg concurrent pipelines per pod (~0.75–0.9 × THREAD_POOL_MAX_WORKERS)
+    averageValue: "3"
+
+# KEDA ScaledObject (used when autoscaling.enabled=true and autoscaling.metric=keda).
+# Prerequisites: KEDA installed in cluster + Prometheus scraping /metrics (serviceMonitor.enabled).
+keda:
+  prometheusServerAddress: http://prometheus-operated.monitoring.svc:9090
+  # Scale up when avg active_pipelines per pod exceeds this (default THREAD_POOL_MAX_WORKERS=4)
+  activePipelinesThreshold: "3"
+  # Override PromQL if your scrape labels differ; default uses pod name prefix match
+  activePipelinesQuery: ""
+  pollingInterval: 30
+  cooldownPeriod: 300
 
 config:
   logLevel: INFO
-  environment: production
+  # Default development so a bare `helm install` starts without API_KEY.
+  # Production overlays (values.prod.yaml) set environment: production.
+  environment: development
   # WARNING: sqlite with emptyDir loses all data on pod restart.
   # Use redis or postgres for durable persistence in production.
   memoryBackend: sqlite
@@ -108,6 +130,18 @@ networkPolicy:
 podDisruptionBudget:
   enabled: false
   minAvailable: 1
+  # Alternative to minAvailable — use one or the other (prod uses maxUnavailable).
+  maxUnavailable: ""
+
+# Spread pods across failure domains (requires topology labels on nodes).
+# Disabled by default (single-replica dev). Enable for multi-replica prod so
+# replicas are not stacked on the same node/AZ.
+topologySpreadConstraints:
+  enabled: false
+  constraints:
+    - maxSkew: 1
+      topologyKey: topology.kubernetes.io/zone
+      whenUnsatisfiable: ScheduleAnyway
 
 namespace:
   create: true
