@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import functools
+import hashlib
 import json
 import logging
 import uuid
@@ -98,7 +99,8 @@ async def run_pipeline(
         extra={
             "run_id": run_id,
             "session_id": session_id,
-            "query_preview": query[:120],
+            "query_sha256": hashlib.sha256(query.encode()).hexdigest()[:16],
+            "query_length": len(query),
         },
     )
 
@@ -209,7 +211,13 @@ async def _stream_pipeline(
                         else report_raw
                     )
         finally:
-            pipeline.close()
+            try:
+                pipeline.close()
+            except Exception as close_exc:
+                logger.warning(
+                    "POST /run/stream — pipeline close failed",
+                    extra={"run_id": run_id, "error": str(close_exc)},
+                )
 
         if report is None:
             yield f"data: {json.dumps({'type': 'error', 'message': 'Pipeline completed without a report.'})}\n\n"
@@ -318,7 +326,8 @@ async def run_stream(
         extra={
             "run_id": run_id,
             "session_id": session_id,
-            "query_preview": query[:120],
+            "query_sha256": hashlib.sha256(query.encode()).hexdigest()[:16],
+            "query_length": len(query),
         },
     )
 
@@ -386,7 +395,8 @@ async def run_research(
         extra={
             "run_id": run_id,
             "session_id": session_id,
-            "query_preview": query[:120],
+            "query_sha256": hashlib.sha256(query.encode()).hexdigest()[:16],
+            "query_length": len(query),
         },
     )
 

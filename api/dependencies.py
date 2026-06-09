@@ -47,6 +47,25 @@ def _rate_limit_key(request: Request) -> str:
     )
 
 
+def _rate_limit_route_path(request: Request) -> str:
+    """Low-cardinality endpoint path used to scope the rate-limit key.
+
+    Prefers the route template (e.g. ``/sessions/{session_id}/history``) when
+    routing has already resolved the route; falls back to the raw request
+    path, which is acceptable given the strict patterns on path parameters.
+    """
+    route = request.scope.get("route")
+    path_format = getattr(route, "path_format", None)
+    if path_format:
+        return str(path_format)
+    return request.url.path
+
+
+def _rate_limit_endpoint_key(request: Request) -> str:
+    """Rate-limit bucket key scoped per client AND per endpoint path."""
+    return f"{_rate_limit_key(request)}:{_rate_limit_route_path(request)}"
+
+
 # ---------------------------------------------------------------------------
 # Auth dependency
 # ---------------------------------------------------------------------------

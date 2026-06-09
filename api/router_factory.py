@@ -286,8 +286,36 @@ def build_pack_router(
                     pack_cls_to_use, pack, body
                 ):
                     yield f"data: {json.dumps(event, default=str)}\n\n"
+            except AgentTimeoutError as exc:
+                logger.error(
+                    "Pack stream — timeout",
+                    extra={"run_id": run_id, "pack_id": pack_id, "error": str(exc)},
+                )
+                yield f"data: {json.dumps({'type': 'error', 'message': 'The pipeline timed out.'})}\n\n"
+            except (AgentExecutionError, AgentValidationError) as exc:
+                logger.error(
+                    "Pack stream — error",
+                    extra={"run_id": run_id, "pack_id": pack_id, "error": str(exc)},
+                )
+                yield f"data: {json.dumps({'type': 'error', 'message': 'The pipeline encountered an error.'})}\n\n"
+            except Exception:
+                logger.exception(
+                    "Pack stream — unexpected error",
+                    extra={"run_id": run_id, "pack_id": pack_id},
+                )
+                yield f"data: {json.dumps({'type': 'error', 'message': 'Internal error'})}\n\n"
             finally:
-                pack.close()
+                try:
+                    pack.close()
+                except Exception as close_exc:
+                    logger.warning(
+                        "Pack close failed after stream",
+                        extra={
+                            "run_id": run_id,
+                            "pack_id": pack_id,
+                            "error": str(close_exc),
+                        },
+                    )
 
         stream_timeout = effective_stream_timeout_seconds(pack_id, get_settings())
 
