@@ -6,6 +6,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class FinancialMemoInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     topic: str = Field(..., min_length=1, max_length=500)
     hypothesis: str = Field(default="", max_length=2000)
     metrics: str = Field(default="", max_length=2000)

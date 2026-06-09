@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class MeetingPrepInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     company: str = Field(..., min_length=1, max_length=500)
     person: str = Field(default="", max_length=200)
     meeting_goal: str = Field(default="discovery call", max_length=500)
@@ -13,6 +15,8 @@ class MeetingPrepInput(BaseModel):
 
 
 class MeetingPrepOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     company: str
     person: str
     company_overview: str

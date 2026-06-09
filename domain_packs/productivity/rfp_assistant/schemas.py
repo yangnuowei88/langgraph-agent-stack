@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class RfpAssistantInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     query: str = Field(
         ...,
         min_length=1,
@@ -17,6 +19,8 @@ class RfpAssistantInput(BaseModel):
 
 
 class RfpAssistantOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     query: str
     requirements: list[str]
     gaps: list[str]

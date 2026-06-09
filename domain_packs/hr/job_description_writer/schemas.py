@@ -6,6 +6,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class JobDescriptionWriterInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     role_title: str = Field(..., min_length=1, max_length=200)
     team_context: str = Field(default="", max_length=2000)
     seniority: str = Field(default="mid", max_length=50)

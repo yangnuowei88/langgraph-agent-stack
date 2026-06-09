@@ -36,6 +36,7 @@ app = FastAPI(
     version=state.APP_VERSION,
     docs_url=None if _is_production else "/docs",
     redoc_url=None if _is_production else "/redoc",
+    openapi_url=None if _is_production else "/openapi.json",
     lifespan=lifespan,
 )
 

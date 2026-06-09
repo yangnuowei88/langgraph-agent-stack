@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SupportTriageInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     ticket_subject: str = Field(..., min_length=1, max_length=500)
     body: str = Field(..., min_length=1, max_length=8000)
     customer_tier: str = Field(default="standard", max_length=50)
 
 
 class SupportTriageOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     category: str
     priority: str
     sentiment: str

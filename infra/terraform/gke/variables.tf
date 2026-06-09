@@ -65,8 +65,8 @@ variable "master_authorized_cidrs" {
     cidr_block   = string
     display_name = string
   }))
-  default = [{
-    cidr_block   = "0.0.0.0/0"
-    display_name = "all (restrict in production)"
-  }]
+  # No default access: the operator MUST provide their own CIDRs to reach
+  # the control plane (e.g. office/VPN egress ranges). An empty list means
+  # the GKE API server is unreachable from outside the VPC.
+  default = []
 }
