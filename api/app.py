@@ -87,9 +87,10 @@ app.middleware("http")(body_size_limit_middleware)
 # Static routers
 # ---------------------------------------------------------------------------
 
-from api.endpoints import health, packs, pipeline, sessions  # noqa: E402
+from api.endpoints import health, packs, pipeline, reviews, sessions  # noqa: E402
 
 app.include_router(health.router)
 app.include_router(pipeline.router)
 app.include_router(packs.router)
 app.include_router(sessions.router)
+app.include_router(reviews.router)

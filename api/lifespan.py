@@ -15,6 +15,7 @@ import api.state as state
 from core.config import Settings, get_settings
 from core.memory import cleanup_checkpointer, create_run_history
 from core.observability import init_tracing, server_shutting_down
+from core.review_store import create_review_store
 from core.security import create_rate_limiter, create_session_registry
 from pack_kernel.builtin_packs import register_builtin_packs
 from pack_kernel.registry import PackRegistry
@@ -72,6 +73,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             backend=settings.session_registry_backend,
             redis_url=settings.redis_url,
             ttl_seconds=settings.session_lock_ttl_seconds,
+        )
+
+    if state.review_store is None:
+        state.review_store = create_review_store(
+            backend=settings.review_store_backend,
+            sqlite_path=settings.review_store_path,
         )
 
     if settings.memory_backend.value == "postgres" and not settings.postgres_url:
@@ -162,4 +169,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     cleanup_checkpointer()
     if state.shared_memory is not None:
         state.shared_memory.close()
+    if state.review_store is not None:
+        state.review_store.close()
     logger.info("Shutdown complete")
