@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hmac
 import inspect
 import logging
 from typing import Annotated, Any
@@ -12,7 +11,11 @@ from fastapi import Depends, HTTPException, Request, status
 import api.state as state
 from control_plane.enforce import effective_budget_usd
 from core.config import Settings, get_settings
-from core.security import rate_limit_client_key, resolve_client_ip
+from core.security import (
+    rate_limit_client_key,
+    resolve_client_ip,
+    verify_bearer_token,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,13 +40,25 @@ def _request_client_ip(request: Request) -> str:
 
 
 def _rate_limit_key(request: Request) -> str:
+    """Rate-limit bucket key: per-token when multi-tenant, per-IP otherwise.
+
+    With 2+ configured Bearer secrets (multi-tenant), each token gets its own
+    bucket (``token:<sha256[:16]>``). With a single shared key, token hashing
+    would collapse every caller into one global bucket, so the limit stays
+    scoped per client IP (see ``rate_limit_client_key`` docstring).
+    """
     settings = get_settings()
+    api_keys = settings.resolved_api_keys
     return rate_limit_client_key(
         _request_peer_host(request),
         request.headers,
         trust_proxy=settings.trust_proxy_headers,
         forwarded_allow_ips=settings.forwarded_allow_ips,
-        api_key=settings.api_key,
+        # rate_limit_client_key only uses api_key as an "auth is configured"
+        # gate (it hashes the presented token, not this value) — pass the
+        # first resolved key so API_KEYS-only deployments are covered too.
+        api_key=api_keys[0] if api_keys else None,
+        rate_limit_per_token=len(api_keys) > 1,
     )
 
 
@@ -72,13 +87,15 @@ def _rate_limit_endpoint_key(request: Request) -> str:
 
 
 def verify_api_key(request: Request) -> None:
-    """Validate the shared Bearer secret when API_KEY is set.
+    """Validate the Bearer secret when API_KEY and/or API_KEYS is set.
 
+    The token must match ANY configured key (multi-tenant: each tenant has
+    its own key; rotation: old + new keys coexist during the transition).
     Also enforced globally via auth_middleware; this dependency documents
     the contract in OpenAPI for pack routes.
     """
-    api_key = get_settings().api_key
-    if api_key is None:
+    api_keys = get_settings().resolved_api_keys
+    if not api_keys:
         return
     auth_header = request.headers.get("Authorization", "")
     token = (
@@ -86,7 +103,7 @@ def verify_api_key(request: Request) -> None:
         if auth_header.startswith("Bearer ")
         else ""
     )
-    if not token or not hmac.compare_digest(token, api_key):
+    if not verify_bearer_token(token, api_keys):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or missing Bearer token.",

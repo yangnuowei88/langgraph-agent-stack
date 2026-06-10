@@ -98,6 +98,16 @@ secrets:
   openaiApiKey: ""
   googleApiKey: ""
   redisUrl: ""
+  # Inbound API authentication (Bearer). Leave both empty to disable auth
+  # (dev only — at least one key is required when config.environment=production).
+  # apiKey: legacy single shared secret (API_KEY env var).
+  # apiKeys: comma-separated multi-tenant key list (API_KEYS env var) —
+  #   any listed key is accepted; use it for per-tenant keys and zero-downtime
+  #   rotation (list old + new keys during the transition).
+  # In production prefer secrets.existingSecret with API_KEY / API_KEYS
+  # provisioned via ESO / Sealed Secrets / SOPS (see templates/secret.yaml).
+  apiKey: ""
+  apiKeys: ""
 
 serviceAccount:
   create: true
