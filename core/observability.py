@@ -21,12 +21,14 @@ installed, standard ``logging`` and no-op tracing are used instead.
 from __future__ import annotations
 
 import contextvars
+import functools
 import importlib.util
 import logging
 import os
-from collections.abc import Generator, Mapping
+import time
+from collections.abc import Callable, Generator, Mapping
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, TypeVar
 
 # ---------------------------------------------------------------------------
 # Request ID context variable — propagates request_id through async call chains
@@ -273,12 +275,17 @@ llm_tokens_total: Any | None = None
 active_pipelines: Any | None = None
 server_shutting_down: Any | None = None
 requests_rejected_during_shutdown: Any | None = None
+llm_retry_attempts_total: Any | None = None
+agent_node_duration_seconds: Any | None = None
+output_guard_findings_total: Any | None = None
 _PROMETHEUS_AVAILABLE = False
 
 # HTTP latency spans sub-second health checks through long SSE streams (STREAM_TIMEOUT_SECONDS).
 _HTTP_DURATION_BUCKETS = (0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0)
 # LLM calls routinely exceed 30s on analysis workloads.
 _LLM_DURATION_BUCKETS = (0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0)
+# Graph nodes typically wrap one or more LLM calls — same upper range applies.
+_NODE_DURATION_BUCKETS = _LLM_DURATION_BUCKETS
 
 
 def metrics_path_label(scope: Mapping[str, Any]) -> str:
@@ -352,6 +359,26 @@ try:
         "requests_rejected_during_shutdown_total",
         "Requests rejected with 503 because the server is shutting down",
     )
+    llm_retry_attempts_total = Counter(
+        "llm_retry_attempts_total",
+        "LLM retry attempts: outcome='success' counts each retry performed "
+        "after a transient error, outcome='exhausted' counts retry budgets "
+        "that were fully consumed without recovery",
+        ["provider", "outcome"],
+    )
+    agent_node_duration_seconds = Histogram(
+        "agent_node_duration_seconds",
+        "Wall-clock duration of one agent graph node execution in seconds",
+        ["agent", "node"],
+        buckets=list(_NODE_DURATION_BUCKETS),
+    )
+    output_guard_findings_total = Counter(
+        "output_guard_findings_total",
+        "Output integrity guard events: action='audit' counts outputs with "
+        "findings logged for review, action='fail_closed' counts outputs "
+        "rejected by the fail-closed policy",
+        ["pack_id", "action"],
+    )
 
     def create_metrics_app() -> Any:
         """Return ASGI app for /metrics endpoint."""
@@ -364,3 +391,48 @@ except ImportError:
     def create_metrics_app() -> Any:
         """No-op when prometheus-client is not installed."""
         return None
+
+
+# ---------------------------------------------------------------------------
+# Agent node timing decorator
+# ---------------------------------------------------------------------------
+
+_F = TypeVar("_F", bound=Callable[..., Any])
+
+
+def timed_node(agent_name: str, node_name: str) -> Callable[[_F], _F]:
+    """Decorator that records graph-node duration in ``agent_node_duration_seconds``.
+
+    Labels are static strings supplied at decoration time (agent class name and
+    node name), so metric cardinality stays bounded.  When ``prometheus-client``
+    is not installed the wrapped function runs with zero overhead and its
+    return value / exceptions are passed through unchanged.
+
+    Currently applied to ``AnalystAgent`` nodes; other agents (e.g.
+    ``ResearchAgent``) can adopt it by decorating their node methods the same
+    way.
+
+    Args:
+        agent_name: Low-cardinality agent identifier (e.g. ``"AnalystAgent"``).
+        node_name: Graph node name (e.g. ``"analyze"``).
+
+    Returns:
+        A decorator preserving the wrapped callable's signature and result.
+    """
+
+    def decorator(func: _F) -> _F:
+        @functools.wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            if agent_node_duration_seconds is None:
+                return func(*args, **kwargs)
+            start = time.monotonic()
+            try:
+                return func(*args, **kwargs)
+            finally:
+                agent_node_duration_seconds.labels(
+                    agent=agent_name, node=node_name
+                ).observe(time.monotonic() - start)
+
+        return wrapper  # type: ignore[return-value]
+
+    return decorator

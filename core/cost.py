@@ -175,6 +175,7 @@ MODEL_ID_PREFIX_ALIASES: tuple[tuple[str, str], ...] = (
 # ---------------------------------------------------------------------------
 
 pack_run_cost_usd_total: Any | None
+llm_cost_usd_total: Any | None
 try:
     from prometheus_client import Counter
 
@@ -183,10 +184,54 @@ try:
         "Cumulative LLM cost in USD per model",
         ["model"],
     )
+    # ``provider`` keeps cardinality lower than per-model labels: a handful of
+    # vendors versus dozens of dated model IDs.
+    llm_cost_usd_total = Counter(
+        "llm_cost_usd_total",
+        "Cumulative LLM cost in USD per provider",
+        ["provider"],
+    )
     _PROMETHEUS_AVAILABLE = True
 except ImportError:
     pack_run_cost_usd_total = None
+    llm_cost_usd_total = None
     _PROMETHEUS_AVAILABLE = False
+
+
+# Longest-prefix-first mapping from normalised model IDs to provider labels.
+_MODEL_PROVIDER_PREFIXES: tuple[tuple[str, str], ...] = (
+    ("anthropic.", "anthropic"),
+    ("claude", "anthropic"),
+    ("gpt-", "openai"),
+    ("o1", "openai"),
+    ("o3", "openai"),
+    ("gemini", "google"),
+    ("mistral", "mistral"),
+    ("pixtral", "mistral"),
+    ("meta.llama", "meta"),
+    ("llama", "meta"),
+)
+
+
+def provider_from_model_id(model_id: str) -> str:
+    """Map a model ID to a low-cardinality provider label.
+
+    Bedrock-style IDs (``us.anthropic.claude-...``) are reduced to their
+    vendor fragment first.  Unrecognised IDs map to ``"unknown"`` so the
+    label set stays bounded.
+    """
+    normalised = _normalize_model_id(model_id)
+    if not normalised:
+        return "unknown"
+    candidates = [normalised]
+    bedrock = _bedrock_model_fragment(normalised)
+    if bedrock:
+        candidates.append(bedrock)
+    for prefix, provider in _MODEL_PROVIDER_PREFIXES:
+        for candidate in candidates:
+            if candidate.startswith(prefix):
+                return provider
+    return "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -653,6 +698,10 @@ class CostTracker(BaseCallbackHandler):
             pack_run_cost_usd_total.labels(model=usage.model_id or "unknown").inc(
                 call_cost
             )
+        if _PROMETHEUS_AVAILABLE and llm_cost_usd_total is not None:
+            llm_cost_usd_total.labels(
+                provider=provider_from_model_id(usage.model_id)
+            ).inc(call_cost)
 
         _log.debug(
             "LLM call cost",

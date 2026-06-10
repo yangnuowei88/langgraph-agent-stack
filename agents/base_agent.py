@@ -33,6 +33,7 @@ from typing_extensions import TypedDict
 
 from agents.llm_retry import (
     before_sleep_log_transient_error,
+    record_retry_exhausted,
     retry_if_transient_llm_error,
 )
 from core.config import get_settings
@@ -448,7 +449,9 @@ class BaseAgent(abc.ABC):
             stop=stop_after_attempt(max_attempts),
             wait=wait_random_exponential(multiplier=base_delay, max=max_delay),
             reraise=True,
-            before_sleep=before_sleep_log_transient_error(self._log),
+            before_sleep=before_sleep_log_transient_error(
+                self._log, provider=settings.llm_provider
+            ),
         )
 
         try:
@@ -458,6 +461,10 @@ class BaseAgent(abc.ABC):
         except AgentExecutionError:
             raise
         except Exception as exc:
+            # Only transient errors reach this branch (fatal ones are wrapped
+            # into AgentExecutionError inside _invoke_once), so the retry
+            # budget was exhausted without recovery.
+            record_retry_exhausted(settings.llm_provider)
             if llm_requests_total is not None:
                 llm_requests_total.labels(
                     provider=settings.llm_provider,

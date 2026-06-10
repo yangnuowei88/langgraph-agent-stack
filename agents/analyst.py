@@ -39,6 +39,7 @@ from agents.models import (
     ResearchResult,
 )
 from core.cost import CostTracker
+from core.observability import timed_node
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +114,7 @@ class AnalystAgent(BaseAgent):
     # Graph nodes
     # ------------------------------------------------------------------
 
+    @timed_node("AnalystAgent", "analyze")
     def _node_analyze(self, state: AgentState) -> dict[str, Any]:
         """
         Node: extract key insights from the research findings.
@@ -170,6 +172,7 @@ class AnalystAgent(BaseAgent):
             },
         }
 
+    @timed_node("AnalystAgent", "synthesize")
     def _node_synthesize(self, state: AgentState) -> dict[str, Any]:
         """
         Node: connect insights and identify cross-cutting patterns.
@@ -226,6 +229,7 @@ class AnalystAgent(BaseAgent):
             },
         }
 
+    @timed_node("AnalystAgent", "report")
     def _node_report(self, state: AgentState) -> dict[str, Any]:
         """
         Node: compile all intermediate results into a final ``AnalysisReport``.

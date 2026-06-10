@@ -117,10 +117,38 @@ def retry_if_transient_llm_error(exc: BaseException) -> bool:
     return is_retryable_llm_error(exc)
 
 
-def before_sleep_log_transient_error(logger: object) -> Callable[..., None]:
-    """Build a tenacity ``before_sleep`` callback that logs retry attempts."""
+def record_retry_attempt(provider: str, outcome: str) -> None:
+    """Increment ``llm_retry_attempts_total{provider, outcome}`` (no-op without Prometheus).
+
+    Args:
+        provider: Low-cardinality LLM provider name (e.g. ``"anthropic"``).
+        outcome: ``"success"`` when a retry is performed after a transient
+            error, ``"exhausted"`` when the retry budget is consumed without
+            recovery.
+    """
+    from core.observability import llm_retry_attempts_total
+
+    if llm_retry_attempts_total is not None:
+        llm_retry_attempts_total.labels(provider=provider, outcome=outcome).inc()
+
+
+def record_retry_exhausted(provider: str) -> None:
+    """Record that all retries were exhausted for ``provider``."""
+    record_retry_attempt(provider, "exhausted")
+
+
+def before_sleep_log_transient_error(
+    logger: object, provider: str | None = None
+) -> Callable[..., None]:
+    """Build a tenacity ``before_sleep`` callback that logs retry attempts.
+
+    When ``provider`` is given, each performed retry also increments
+    ``llm_retry_attempts_total{provider, outcome="success"}``.
+    """
 
     def _before_sleep(retry_state: object) -> None:
+        if provider is not None:
+            record_retry_attempt(provider, "success")
         outcome = getattr(retry_state, "outcome", None)
         exc = outcome.exception() if outcome is not None else None
         attempt = getattr(retry_state, "attempt_number", 0)
