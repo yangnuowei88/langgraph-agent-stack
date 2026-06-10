@@ -1,0 +1,262 @@
+"""
+tests/test_evals.py — Golden-dataset evaluation harness.
+
+Covers the deterministic checks, the dataset loader, the runner (happy path,
+expected-error cases, crashing packs), version comparison through the
+PackRegistry, and the optional LLM judge. Everything is scripted — no
+network, no real LLM.
+"""
+
+from __future__ import annotations
+
+import json
+from unittest.mock import MagicMock
+
+import pytest
+
+from evals.checks import run_checks
+from evals.judge import judge_case
+from evals.models import EvalCase
+from evals.runner import (
+    ScriptedChatModel,
+    compare_versions,
+    dataset_path_for,
+    list_builtin_datasets,
+    load_dataset,
+    run_pack_eval,
+)
+from pack_kernel.builtin_packs import register_builtin_packs
+
+register_builtin_packs()
+
+
+# ---------------------------------------------------------------------------
+# Deterministic checks (unit)
+# ---------------------------------------------------------------------------
+
+
+class TestRunChecks:
+    def test_required_fields(self) -> None:
+        results = run_checks({"a": 1, "b": None}, {"required_fields": ["a", "b", "c"]})
+        outcome = {r.name: r.passed for r in results}
+        assert outcome == {
+            "required_fields:a": True,
+            "required_fields:b": False,
+            "required_fields:c": False,
+        }
+
+    def test_contains_and_not_contains(self) -> None:
+        output = {"summary": "quantum computing", "bullets": ["alpha", "beta"]}
+        results = run_checks(
+            output,
+            {
+                "contains": {"summary": "quantum", "bullets": "beta"},
+                "not_contains": {"summary": "blockchain"},
+            },
+        )
+        assert all(r.passed for r in results)
+
+        failing = run_checks(output, {"contains": {"summary": "blockchain"}})
+        assert not failing[0].passed
+        assert "blockchain" in failing[0].detail
+
+    def test_min_length(self) -> None:
+        output = {"items": ["a", "b"], "scalar": 3}
+        results = run_checks(
+            output, {"min_length": {"items": 2, "scalar": 1, "missing": 1}}
+        )
+        outcome = {r.name: r.passed for r in results}
+        assert outcome["min_length:items"] is True
+        assert outcome["min_length:scalar"] is False  # len() on int → fail
+        assert outcome["min_length:missing"] is False
+
+    def test_numeric_range(self) -> None:
+        results = run_checks(
+            {"confidence": 0.7, "score": "high"},
+            {"numeric_range": {"confidence": [0.5, 1.0], "score": [0, 1]}},
+        )
+        outcome = {r.name: r.passed for r in results}
+        assert outcome["numeric_range:confidence"] is True
+        assert outcome["numeric_range:score"] is False
+
+
+# ---------------------------------------------------------------------------
+# Dataset loading
+# ---------------------------------------------------------------------------
+
+
+def test_load_builtin_datasets() -> None:
+    available = list_builtin_datasets()
+    assert {"summariser", "research_analysis", "talent_screening"} <= set(available)
+    for pack_id in available:
+        cases = load_dataset(dataset_path_for(pack_id))
+        assert cases, f"dataset {pack_id} is empty"
+        assert all(c.id for c in cases)
+
+
+def test_load_dataset_rejects_bad_shape(tmp_path) -> None:
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("- not\n- a\n- mapping\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="'cases'"):
+        load_dataset(bad)
+
+
+# ---------------------------------------------------------------------------
+# Runner — built-in datasets must pass end to end
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "pack_id", ["summariser", "research_analysis", "talent_screening"]
+)
+def test_builtin_dataset_passes(pack_id: str) -> None:
+    cases = load_dataset(dataset_path_for(pack_id))
+    report = run_pack_eval(pack_id, cases)
+    failed = [c for c in report.cases if not c.passed]
+    assert not failed, f"failing cases: {[(c.case_id, c.error) for c in failed]}"
+    assert report.pass_rate == 1.0
+    assert report.version == "default"
+
+
+def test_expected_error_case_fails_when_pack_succeeds() -> None:
+    """expect_error must FAIL the case when the pack unexpectedly succeeds."""
+    case = EvalCase(
+        id="should-have-failed",
+        input={"text": "hello world"},
+        mock_responses=["- a bullet"],
+        expect_error="integrity check",
+    )
+    report = run_pack_eval("summariser", [case])
+    assert report.pass_rate == 0.0
+    assert "got success" in (report.cases[0].error or "")
+
+
+def test_crashing_case_is_reported_not_raised() -> None:
+    """A pack error becomes a failed case with the error message, not a crash."""
+    case = EvalCase(
+        id="boom",
+        input={"text": "hello"},
+        mock_responses=[],  # empty scripted responses → falls back to llm=None
+    )
+    case = case.model_copy(update={"mock_responses": None})
+    report = run_pack_eval("summariser", [case])
+    assert report.pass_rate == 0.0
+    assert "No LLM available" in (report.cases[0].error or "")
+
+
+def test_runner_records_latency() -> None:
+    cases = load_dataset(dataset_path_for("summariser"))
+    report = run_pack_eval("summariser", cases)
+    assert all(c.latency_seconds >= 0.0 for c in report.cases)
+    assert report.mean_latency_seconds >= 0.0
+
+
+# ---------------------------------------------------------------------------
+# Version comparison
+# ---------------------------------------------------------------------------
+
+
+def test_compare_versions_diff() -> None:
+    """Register a v2 of summariser and compare it against the default."""
+    from domain_packs.productivity.summariser.pack import SummariserPack
+    from pack_kernel.registry import PackRegistry
+
+    class SummariserV2(SummariserPack):
+        version = "2.0-eval-test"
+
+    PackRegistry.register(SummariserV2)
+    try:
+        cases = load_dataset(dataset_path_for("summariser"))
+        comparison = compare_versions(
+            "summariser",
+            cases,
+            baseline_version="1.0",
+            candidate_version="2.0-eval-test",
+        )
+        diff = comparison.diff()
+        assert diff["baseline_version"] == "1.0"
+        assert diff["candidate_version"] == "2.0-eval-test"
+        # Identical implementation → identical pass rate.
+        assert diff["pass_rate_delta"] == 0.0
+        assert comparison.baseline.pass_rate == 1.0
+        assert comparison.candidate.pass_rate == 1.0
+    finally:
+        PackRegistry._reset()
+        register_builtin_packs()
+
+
+# ---------------------------------------------------------------------------
+# LLM judge (optional)
+# ---------------------------------------------------------------------------
+
+
+def test_judge_parses_strict_verdict() -> None:
+    judge_llm = MagicMock()
+    judge_llm.invoke.return_value = MagicMock(
+        content=json.dumps({"score": 0.9, "reasoning": "solid"})
+    )
+    verdict = judge_case(
+        judge_llm,
+        rubric="Bullets must be factual.",
+        case_input={"text": "x"},
+        output={"bullets": ["a"]},
+    )
+    assert verdict.score == 0.9
+    assert verdict.reasoning == "solid"
+    prompt = judge_llm.invoke.call_args[0][0]
+    assert "UNTRUSTED" in prompt  # judged content is delimiter-wrapped
+
+
+@pytest.mark.parametrize(
+    "bad_response",
+    [
+        "not json at all",
+        json.dumps({"score": 2.0, "reasoning": "out of range"}),
+        json.dumps({"score": 0.5, "extra_field": True}),
+    ],
+)
+def test_judge_rejects_invalid_verdicts(bad_response: str) -> None:
+    judge_llm = MagicMock()
+    judge_llm.invoke.return_value = MagicMock(content=bad_response)
+    with pytest.raises(ValueError, match="Invalid judge verdict"):
+        judge_case(
+            judge_llm, rubric="r", case_input={"text": "x"}, output={"bullets": []}
+        )
+
+
+def test_judge_score_flows_into_case_result() -> None:
+    judge_llm = MagicMock()
+    judge_llm.invoke.return_value = MagicMock(
+        content=json.dumps({"score": 0.75, "reasoning": "ok"})
+    )
+    case = EvalCase(
+        id="judged",
+        input={"text": "hello"},
+        mock_responses=["- a bullet"],
+        checks={"required_fields": ["bullets"]},
+        judge="Bullets must be relevant.",
+    )
+    report = run_pack_eval("summariser", [case], judge_llm=judge_llm)
+    assert report.cases[0].passed is True
+    assert report.cases[0].judge_score == 0.75
+
+
+def test_judge_skipped_without_judge_llm() -> None:
+    case = EvalCase(
+        id="unjudged",
+        input={"text": "hello"},
+        mock_responses=["- a bullet"],
+        judge="Some rubric.",
+    )
+    report = run_pack_eval("summariser", [case])
+    assert report.cases[0].judge_score is None
+
+
+# ---------------------------------------------------------------------------
+# ScriptedChatModel
+# ---------------------------------------------------------------------------
+
+
+def test_scripted_model_supports_bind_tools() -> None:
+    model = ScriptedChatModel(responses=["x"])
+    assert model.bind_tools([]) is model

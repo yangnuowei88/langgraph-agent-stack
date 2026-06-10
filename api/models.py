@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 if TYPE_CHECKING:
     from agents.analyst import AnalysisReport
@@ -265,3 +265,56 @@ class ResearchResponse(BaseModel):
             session_id=session_id,
             cost_usd=cost_usd,
         )
+
+
+# ---------------------------------------------------------------------------
+# Human-review queue (regulated packs)
+# ---------------------------------------------------------------------------
+
+
+class ReviewEntry(BaseModel):
+    """A single human-review queue entry for one regulated pack run."""
+
+    run_id: str = Field(description="Run identifier the review refers to.")
+    pack_id: str = Field(description="Regulated pack that produced the output.")
+    session_id: str | None = Field(
+        default=None, description="Session the run belonged to, when provided."
+    )
+    status: str = Field(description="Review state: pending | approved | rejected.")
+    output_summary: str = Field(
+        default="",
+        description="Truncated summary of the pack output (never the full payload).",
+    )
+    created_at: str = Field(description="ISO-8601 UTC timestamp of creation.")
+    decided_at: str | None = Field(
+        default=None, description="ISO-8601 UTC timestamp of the decision."
+    )
+    reviewer: str | None = Field(
+        default=None, description="Identifier of the human who decided."
+    )
+    notes: str | None = Field(default=None, description="Reviewer notes.")
+
+
+class ReviewListResponse(BaseModel):
+    """Response schema for ``GET /reviews``."""
+
+    reviews: list[ReviewEntry] = Field(default_factory=list)
+    total: int = Field(description="Number of reviews returned in this page.")
+
+
+class ReviewDecisionRequest(BaseModel):
+    """Request body for ``POST /reviews/{run_id}/decision``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["approved", "rejected"] = Field(
+        description="The reviewer's decision."
+    )
+    reviewer: str = Field(
+        min_length=1,
+        max_length=200,
+        description="Identifier of the human reviewer (name, email, or ID).",
+    )
+    notes: str | None = Field(
+        default=None, max_length=4000, description="Optional free-text notes."
+    )

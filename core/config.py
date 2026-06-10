@@ -352,6 +352,21 @@ class Settings(BaseSettings):
         ),
     )
 
+    review_store_backend: Literal["memory", "sqlite"] = Field(
+        default="memory",
+        validation_alias="REVIEW_STORE_BACKEND",
+        description=(
+            "Human-review queue backend for regulated pack outputs. 'memory' "
+            "(default) is per-process and lost on restart; 'sqlite' persists "
+            "decisions across restarts."
+        ),
+    )
+    review_store_path: str = Field(
+        default="./data/review_store.db",
+        validation_alias="REVIEW_STORE_PATH",
+        description="SQLite file path used when REVIEW_STORE_BACKEND=sqlite.",
+    )
+
     api_key: str | None = Field(
         default=None,
         validation_alias="API_KEY",

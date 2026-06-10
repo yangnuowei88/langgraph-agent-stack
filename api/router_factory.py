@@ -150,6 +150,54 @@ async def _save_run_best_effort(
         )
 
 
+def _pack_requires_human_review(pack_id: str) -> bool:
+    """True when the pack's policy mandates a human review of every output."""
+    from control_plane import PolicyRegistry
+
+    policy = PolicyRegistry.get(pack_id)
+    return policy is not None and policy.human_review_required
+
+
+async def _create_review_best_effort(
+    *,
+    run_id: str,
+    pack_id: str,
+    session_id: str | None,
+    result_payload: dict[str, Any],
+) -> None:
+    """Queue a pending human review for a regulated run, without ever failing it.
+
+    Same philosophy as ``_save_run_best_effort``: the client response is
+    already computed, so a broken review store must neither block nor fail
+    the request — failures are logged for the compliance audit trail.
+    """
+    if state.review_store is None or not _pack_requires_human_review(pack_id):
+        return
+    from core.review_store import summarize_output
+
+    create_fn = functools.partial(
+        state.review_store.create,
+        run_id=run_id,
+        pack_id=pack_id,
+        session_id=session_id,
+        output_summary=summarize_output(result_payload),
+    )
+    try:
+        await asyncio.wait_for(
+            _run_in_executor(create_fn), timeout=SAVE_RUN_TIMEOUT_SECONDS
+        )
+    except TimeoutError:
+        logger.warning(
+            "review create — timed out, pending review not queued",
+            extra={"run_id": run_id, "pack_id": pack_id},
+        )
+    except Exception as exc:
+        logger.warning(
+            "review create — failed, pending review not queued",
+            extra={"run_id": run_id, "pack_id": pack_id, "error": str(exc)},
+        )
+
+
 def build_pack_router(
     pack_id: str,
     pack_cls: type,
@@ -271,6 +319,12 @@ def build_pack_router(
                 },
                 session_id=session_id,
             )
+            await _create_review_best_effort(
+                run_id=run_id,
+                pack_id=pack_id,
+                session_id=session_id,
+                result_payload=result_payload,
+            )
             return serialized
         finally:
             if session_id:
@@ -339,10 +393,18 @@ def build_pack_router(
                 **pack_runtime_kwargs(pack_cls_to_use),
             )
             try:
+                last_event: dict[str, Any] | None = None
                 async for event in _iter_pack_stream_events(
                     pack_cls_to_use, pack, body
                 ):
+                    last_event = event
                     yield f"data: {json.dumps(event, default=str)}\n\n"
+                await _create_review_best_effort(
+                    run_id=run_id,
+                    pack_id=pack_id,
+                    session_id=session_id,
+                    result_payload=last_event or {},
+                )
             except AgentTimeoutError as exc:
                 logger.error(
                     "Pack stream — timeout",

@@ -40,6 +40,10 @@ shared_connector: Any | None = None  # optional BaseConnector
 rate_limiter: Any | None = None
 input_validator: InputValidator = InputValidator(max_length=2000)
 
+# Human-review queue for regulated pack outputs (core/review_store.py).
+# Set during lifespan startup; None means review tracking is unavailable.
+review_store: Any | None = None
+
 # ---------------------------------------------------------------------------
 # Lifecycle flags
 # ---------------------------------------------------------------------------

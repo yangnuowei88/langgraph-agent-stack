@@ -144,7 +144,23 @@ Rate limiting (memory or Redis), request body cap, prompt-injection / SSRF input
 make help          # all targets
 make check         # ruff + pyright (CI lint)
 make test          # pytest (mocked; use -m integration for testcontainers)
+make eval          # golden-dataset pack evaluations (deterministic)
 make infra-check   # helm lint + kubeconform + checkov
+```
+
+### Pack evaluation
+
+`evals/` runs golden datasets (`evals/datasets/<pack_id>.yaml`) through the
+real pack code with scripted LLM responses — deterministic, no network. Each
+case declares an input, the scripted responses, and checks
+(`required_fields`, `contains`, `min_length`, `numeric_range`, or
+`expect_error` for guard rejections). Compare two registered versions of a
+pack before shifting canary weights:
+
+```bash
+uv run python -m evals --pack summariser            # one pack
+uv run python -m evals --pack summariser --version 1.0 --compare 2.0
+uv run python -m evals --all --json                 # CI-friendly output
 ```
 
 Contributor workflow, pre-commit, and PR expectations: **[CONTRIBUTING.md](CONTRIBUTING.md)**.
