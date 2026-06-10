@@ -48,6 +48,7 @@ All public functions and classes carry complete type hints and docstrings.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import ipaddress
 import logging
 import re
@@ -56,7 +57,7 @@ import threading
 import time
 import uuid
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from functools import lru_cache
 from typing import Any, Literal, Protocol, cast, runtime_checkable
 from urllib.parse import urlparse
@@ -355,6 +356,37 @@ async def ensure_request_body_within_limit(
         return {"type": "http.request", "body": body, "more_body": False}
 
     return Request(request.scope, receive), None
+
+
+# ---------------------------------------------------------------------------
+# Bearer-token verification (single key or multi-tenant key set)
+# ---------------------------------------------------------------------------
+
+
+def verify_bearer_token(token: str, keys: Sequence[str]) -> bool:
+    """Return True when *token* matches any configured Bearer secret.
+
+    Each candidate key is compared with :func:`hmac.compare_digest` so the
+    per-key comparison is constant-time. The loop deliberately does NOT
+    short-circuit on the first match: every key is always compared, so the
+    overall timing depends only on the number of configured keys, not on
+    which (if any) key matched.
+
+    Args:
+        token: The Bearer token presented by the caller (already stripped).
+        keys: The configured secrets (see ``Settings.resolved_api_keys``).
+
+    Returns:
+        ``True`` if the token matches at least one key; ``False`` when the
+        token is empty, no keys are provided, or nothing matches.
+    """
+    if not token or not keys:
+        return False
+    matched = False
+    for key in keys:
+        if hmac.compare_digest(token, key):
+            matched = True
+    return matched
 
 
 # ---------------------------------------------------------------------------

@@ -31,6 +31,7 @@ from agents.base_agent import (
 from agents.researcher import ResearchAgent, ResearchResult
 from connectors.base import BaseConnector, ConnectorRequest, ConnectorResult
 from core.config import get_settings
+from core.cost import CostTracker
 from core.memory import create_checkpointer
 from core.observability import trace_span
 from domain_packs.research.research_analysis.schemas import (
@@ -113,9 +114,10 @@ class ResearchAnalysisPack(BaseDomainPack):
                           Defaults to a new UUID4.
             llm:          Optional pre-built LangChain chat model.
             checkpointer: Optional pre-built LangGraph checkpointer.
-            budget_usd:   Per-agent USD cost ceiling for LLM calls.
-                          Each agent in the pipeline enforces this limit independently —
-                          the total pipeline cost may reach ``budget_usd * number_of_agents``.
+            budget_usd:   USD cost ceiling for the *whole pipeline run*.  A single
+                          CostTracker is shared by every agent in the run, so the
+                          limit applies to the cumulative spend of all agents and
+                          ``cost_usd`` exposes the cumulative run cost.
                           Set to ``None`` to disable budget enforcement (default).
             connector:    Optional retrieval adapter; when set, records from
                           ``connector.fetch()`` are merged into the research phase output.
@@ -126,6 +128,21 @@ class ResearchAnalysisPack(BaseDomainPack):
         self.run_id = run_id or str(uuid.uuid4())
         self._checkpointer = checkpointer or create_checkpointer(get_settings())
         self._connector = connector
+        # ONE tracker for the whole run, shared by every agent, so budget_usd
+        # caps the cumulative spend of the pipeline (not per-agent).  The same
+        # budget resolution as BaseAgent applies: explicit argument first,
+        # then the settings-level default.  When neither is set, no tracker is
+        # created and agents keep their legacy untracked behaviour.
+        _effective_budget: float | None = (
+            budget_usd
+            if budget_usd is not None
+            else get_settings().pack_default_budget_usd
+        )
+        self._cost_tracker: CostTracker | None = (
+            CostTracker(budget_usd=_effective_budget)
+            if _effective_budget is not None
+            else None
+        )
         self._research_agent: ResearchAgent | None = None
         self._analyst_agent: AnalystAgent | None = None
         self._graph = self._build_graph()
@@ -243,7 +260,7 @@ class ResearchAnalysisPack(BaseDomainPack):
                         thread_id=f"{self.run_id}-research",
                         llm=self._llm,
                         checkpointer=self._checkpointer,
-                        budget_usd=self._budget_usd,
+                        cost_tracker=self._cost_tracker,
                     )
                 research_agent = self._research_agent
                 if research_agent is None:
@@ -328,7 +345,7 @@ class ResearchAnalysisPack(BaseDomainPack):
                         thread_id=f"{self.run_id}-analysis",
                         llm=self._llm,
                         checkpointer=self._checkpointer,
-                        budget_usd=self._budget_usd,
+                        cost_tracker=self._cost_tracker,
                     )
                 analyst_agent = self._analyst_agent
                 if analyst_agent is None:
@@ -372,13 +389,10 @@ class ResearchAnalysisPack(BaseDomainPack):
 
     @property
     def cost_usd(self) -> float:
-        """Total USD cost for this run across all agents."""
-        total = 0.0
-        if self._research_agent is not None:
-            total += self._research_agent.cost_usd
-        if self._analyst_agent is not None:
-            total += self._analyst_agent.cost_usd
-        return total
+        """Total USD cost for this run across all agents (shared tracker)."""
+        if self._cost_tracker is not None:
+            return self._cost_tracker.total_cost_usd
+        return 0.0
 
     # ------------------------------------------------------------------
     # Conditional routing
@@ -545,6 +559,6 @@ class ResearchAnalysisPack(BaseDomainPack):
             thread_id=f"{self.run_id}-research-only",
             llm=self._llm,
             checkpointer=self._checkpointer,
-            budget_usd=self._budget_usd,
+            cost_tracker=self._cost_tracker,
         )
         return agent.run_structured(query.strip())

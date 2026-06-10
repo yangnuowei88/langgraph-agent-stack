@@ -425,20 +425,39 @@ class TestResearchAnalysisPackBudget:
         assert pack._budget_usd is None
         pack.close()
 
-    def test_pack_cost_usd_property_sums_agents(self) -> None:
-        """cost_usd must return the sum of both agents' cost_usd values."""
+    def test_pack_cost_usd_property_reads_shared_tracker(self) -> None:
+        """cost_usd must reflect the cumulative spend on the run's shared tracker."""
         pack = ResearchAnalysisPack(budget_usd=5.0)
 
-        mock_research = MagicMock()
-        mock_research.cost_usd = 0.30
-        mock_analyst = MagicMock()
-        mock_analyst.cost_usd = 0.15
-
-        pack._research_agent = mock_research
-        pack._analyst_agent = mock_analyst
+        assert pack._cost_tracker.budget_usd == pytest.approx(5.0)
+        pack._cost_tracker.total_cost_usd = 0.45
 
         assert pack.cost_usd == pytest.approx(0.45)
         pack.close()
+
+    def test_pack_shares_one_tracker_across_agents(
+        self,
+        mock_research_result: ResearchResult,
+        mock_analysis_report: AnalysisReport,
+    ) -> None:
+        """Both pipeline agents must receive the pack's shared CostTracker."""
+        mock_research_agent = MagicMock()
+        mock_research_agent.run_structured.return_value = mock_research_result
+        mock_analyst_agent = MagicMock()
+        mock_analyst_agent.run_structured.return_value = mock_analysis_report
+
+        with (
+            patch(
+                "core.graph.ResearchAgent", return_value=mock_research_agent
+            ) as ra_cls,
+            patch("core.graph.AnalystAgent", return_value=mock_analyst_agent) as aa_cls,
+        ):
+            pack = ResearchAnalysisPack(budget_usd=2.0)
+            pack.run("shared budget query")
+
+            assert ra_cls.call_args.kwargs["cost_tracker"] is pack._cost_tracker
+            assert aa_cls.call_args.kwargs["cost_tracker"] is pack._cost_tracker
+            pack.close()
 
     def test_pack_cost_usd_zero_when_no_agents_run(self) -> None:
         """cost_usd must be 0.0 before any agents are instantiated."""

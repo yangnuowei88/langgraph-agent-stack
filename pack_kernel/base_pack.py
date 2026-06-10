@@ -110,9 +110,10 @@ class BaseDomainPack(abc.ABC):
         run_id:      Optional stable identifier for the pipeline run.
         llm:         Optional pre-built LangChain chat model (injected by API at startup).
         checkpointer: Optional pre-built LangGraph checkpointer.
-        budget_usd:  Per-agent USD cost ceiling for LLM calls.
-                     Each agent in the pipeline enforces this limit independently —
-                     the total pipeline cost may reach ``budget_usd * number_of_agents``.
+        budget_usd:  USD cost ceiling for LLM calls made during one pack run.
+                     Multi-agent packs share a single CostTracker across all
+                     their agents so the ceiling applies to the cumulative
+                     spend of the run (see ResearchAnalysisPack).
                      Set to ``None`` to disable budget enforcement (default).
     """
 

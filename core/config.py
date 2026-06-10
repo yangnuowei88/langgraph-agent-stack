@@ -365,6 +365,35 @@ class Settings(BaseSettings):
         ),
     )
 
+    api_keys: str | None = Field(
+        default=None,
+        validation_alias="API_KEYS",
+        description=(
+            "Optional comma-separated list of accepted Bearer secrets for "
+            "multi-tenant API authentication (spaces around commas tolerated). "
+            "Merged with the legacy single API_KEY: a request is authenticated "
+            "when its token matches ANY configured key. Enables zero-downtime "
+            "rotation (list old + new keys during the transition) and per-token "
+            "rate limiting (active as soon as 2+ distinct keys are configured)."
+        ),
+    )
+
+    @property
+    def resolved_api_keys(self) -> tuple[str, ...]:
+        """All configured Bearer secrets (legacy ``API_KEY`` + ``API_KEYS``).
+
+        Merges the single legacy ``api_key`` with the comma-separated
+        ``api_keys`` list, strips whitespace, drops empty entries, and
+        de-duplicates while preserving order. Authentication is enabled as
+        soon as this tuple is non-empty.
+        """
+        candidates: list[str] = []
+        if self.api_key:
+            candidates.append(self.api_key.strip())
+        if self.api_keys:
+            candidates.extend(part.strip() for part in self.api_keys.split(","))
+        return tuple(dict.fromkeys(key for key in candidates if key))
+
     trust_proxy_headers: bool = Field(
         default=False,
         validation_alias="TRUST_PROXY_HEADERS",
@@ -431,9 +460,9 @@ class Settings(BaseSettings):
     def _validate_backend_urls(self) -> Settings:
         if self.memory_backend.value == "postgres" and not self.postgres_url:
             raise ValueError("POSTGRES_URL must be set when MEMORY_BACKEND=postgres")
-        if self.environment == "production" and not self.api_key:
+        if self.environment == "production" and not self.resolved_api_keys:
             raise ValueError(
-                "API_KEY must be set when ENVIRONMENT=production. "
+                "API_KEY or API_KEYS must be set when ENVIRONMENT=production. "
                 "Disable auth only in development/staging."
             )
         if self.connector_enabled:

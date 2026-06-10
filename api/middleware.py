@@ -72,16 +72,17 @@ async def add_security_headers(request: Request, call_next: Any) -> Any:
 async def auth_middleware(request: Request, call_next: Any) -> Any:
     """Optional Bearer-token authentication gate.
 
-    When API_KEY is set, every request to a non-exempt path must carry a
-    matching Authorization: Bearer <token> header.
+    When at least one key is configured (legacy API_KEY and/or multi-tenant
+    API_KEYS), every request to a non-exempt path must carry an
+    Authorization: Bearer <token> header matching ANY configured key.
     """
     if request.url.path in _AUTH_EXEMPT_PATHS:
         return await call_next(request)
 
-    import hmac
+    from core.security import verify_bearer_token
 
-    api_key = get_settings().api_key
-    if api_key is None:
+    api_keys = get_settings().resolved_api_keys
+    if not api_keys:
         return await call_next(request)
 
     auth_header = request.headers.get("Authorization", "")
@@ -90,7 +91,7 @@ async def auth_middleware(request: Request, call_next: Any) -> Any:
         if auth_header.startswith("Bearer ")
         else ""
     )
-    if not token or not hmac.compare_digest(token, api_key):
+    if not verify_bearer_token(token, api_keys):
         from api.dependencies import _request_client_ip
 
         logger.warning(

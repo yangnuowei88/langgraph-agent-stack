@@ -32,6 +32,7 @@ from agents.base_agent import (
 )
 from agents.models import ResearchResult  # backward-compat re-export
 from core.config import get_settings
+from core.cost import CostTracker
 from core.security import wrap_untrusted_content
 
 logger = logging.getLogger(__name__)
@@ -69,6 +70,7 @@ class ResearchAgent(BaseAgent):
         llm: BaseChatModel | None = None,
         checkpointer: Any | None = None,
         budget_usd: float | None = None,
+        cost_tracker: CostTracker | None = None,
     ) -> None:
         super().__init__(
             name="ResearchAgent",
@@ -76,6 +78,7 @@ class ResearchAgent(BaseAgent):
             llm=llm,
             checkpointer=checkpointer,
             budget_usd=budget_usd,
+            cost_tracker=cost_tracker,
         )
 
     # ------------------------------------------------------------------
