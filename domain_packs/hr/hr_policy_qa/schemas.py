@@ -6,6 +6,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class HrPolicyQaInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     question: str = Field(..., min_length=1, max_length=2000)
     employee_context: str = Field(default="", max_length=2000)
     document_text: str = Field(default="", max_length=30000)

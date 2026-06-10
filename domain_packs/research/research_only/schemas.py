@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ResearchOnlyInput(BaseModel):
     """Input schema for the research-only pipeline."""
+
+    model_config = ConfigDict(extra="forbid")
 
     query: str = Field(
         ...,
@@ -20,6 +22,8 @@ class ResearchOnlyInput(BaseModel):
 
 class ResearchOnlyOutput(BaseModel):
     """Output schema for the research-only pipeline."""
+
+    model_config = ConfigDict(extra="forbid")
 
     query: str
     findings: list[str]

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ResearchAnalysisInput(BaseModel):
     """Input schema for the Research + Analysis pipeline."""
+
+    model_config = ConfigDict(extra="forbid")
 
     query: str = Field(
         ...,
@@ -23,6 +25,8 @@ class ResearchAnalysisInput(BaseModel):
 
 class ResearchAnalysisOutput(BaseModel):
     """Output schema for the Research + Analysis pipeline."""
+
+    model_config = ConfigDict(extra="forbid")
 
     query: str
     executive_summary: str

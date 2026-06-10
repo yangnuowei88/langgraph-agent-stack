@@ -110,9 +110,9 @@ async def rate_limit_middleware(request: Request, call_next: Any) -> Any:
     if request.url.path in _RATE_LIMIT_EXEMPT_PATHS:
         return await call_next(request)
 
-    from api.dependencies import _rate_limit_key
+    from api.dependencies import _rate_limit_endpoint_key
 
-    limit_key = _rate_limit_key(request)
+    limit_key = _rate_limit_endpoint_key(request)
     if state.rate_limiter is not None and not state.rate_limiter.is_allowed(limit_key):
         from api.dependencies import _request_client_ip
 

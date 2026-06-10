@@ -68,7 +68,7 @@ Client → FastAPI (auth · rate limit · validation)
 
 ## Domain packs
 
-15 built-in packs registered in `pack_kernel/builtin_packs.py`:
+13 built-in packs registered in `pack_kernel/builtin_packs.py`:
 
 | Category | Examples |
 |----------|----------|

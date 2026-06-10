@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class SummaryInput(BaseModel):
     """Input schema for the text summariser pack."""
+
+    model_config = ConfigDict(extra="forbid")
 
     text: str = Field(
         ..., min_length=1, max_length=4000, description="Text to summarise"
@@ -20,6 +22,8 @@ class SummaryInput(BaseModel):
 
 class SummaryOutput(BaseModel):
     """Output schema for the text summariser pack."""
+
+    model_config = ConfigDict(extra="forbid")
 
     original_length: int
     bullets: list[str]

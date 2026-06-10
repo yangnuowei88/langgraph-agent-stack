@@ -6,6 +6,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class ContractReviewerInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     query: str = Field(..., min_length=1, max_length=500, description="Contract label")
     contract_text: str = Field(default="", max_length=50000)
     contract_type: str = Field(default="msa", max_length=100)

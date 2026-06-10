@@ -2,16 +2,20 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ExecutiveBriefInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     text: str = Field(..., min_length=1, max_length=20000)
     audience: str = Field(default="CEO", max_length=100)
     bullet_count: int = Field(default=5, ge=1, le=10)
 
 
 class ExecutiveBriefOutput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     audience: str
     bullets: list[str]
     so_what: str

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AnalysisOnlyInput(BaseModel):
     """Input: pre-collected research material for AnalystAgent."""
+
+    model_config = ConfigDict(extra="forbid")
 
     query: str = Field(..., min_length=1, max_length=2000)
     summary: str = Field(default="", description="Research summary to analyse")
@@ -19,6 +21,8 @@ class AnalysisOnlyInput(BaseModel):
 
 class AnalysisOnlyOutput(BaseModel):
     """Output schema aligned with AnalysisReport fields."""
+
+    model_config = ConfigDict(extra="forbid")
 
     query: str
     executive_summary: str

@@ -6,6 +6,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class TalentScreeningInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     job_description: str = Field(..., min_length=1, max_length=10000)
     resume_text: str = Field(..., min_length=1, max_length=15000)
     must_have_skills: list[str] = Field(default_factory=list)

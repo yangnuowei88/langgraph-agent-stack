@@ -25,7 +25,12 @@ logger = logging.getLogger(__name__)
 async def get_session_history(
     session_id: Annotated[
         str,
-        FastAPIPath(min_length=1, max_length=200, description="Session identifier"),
+        FastAPIPath(
+            min_length=1,
+            max_length=200,
+            pattern=r"^[a-zA-Z0-9_-]+$",
+            description="Session identifier",
+        ),
     ],
 ) -> HistoryResponse:
     """Return all run records associated with session_id, ordered newest-first."""
