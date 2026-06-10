@@ -13,7 +13,11 @@ from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 
-from core.security import InputValidator
+from core.security import (
+    InMemorySessionRegistry,
+    InputValidator,
+    SessionRegistryBackend,
+)
 
 APP_VERSION = "0.5.0"
 
@@ -47,8 +51,22 @@ _init_lock: threading.Lock = threading.Lock()
 # In-flight session registry — dedupes concurrent runs per session_id
 # ---------------------------------------------------------------------------
 
-_inflight_sessions: set[str] = set()
-_inflight_sessions_lock: threading.Lock = threading.Lock()
+session_registry: SessionRegistryBackend | None = None
+_session_registry_lock: threading.Lock = threading.Lock()
+
+
+def _get_session_registry() -> SessionRegistryBackend:
+    """Return the registry, lazily defaulting to in-memory.
+
+    The lifespan wires the configured backend (memory or Redis); the lazy
+    fallback keeps direct callers (unit tests) working without startup.
+    """
+    global session_registry
+    if session_registry is None:
+        with _session_registry_lock:
+            if session_registry is None:
+                session_registry = InMemorySessionRegistry()
+    return session_registry
 
 
 def try_acquire_session(session_id: str) -> bool:
@@ -58,17 +76,12 @@ def try_acquire_session(session_id: str) -> bool:
         True if the session was free and is now marked in flight;
         False if a run is already in progress for this session.
     """
-    with _inflight_sessions_lock:
-        if session_id in _inflight_sessions:
-            return False
-        _inflight_sessions.add(session_id)
-        return True
+    return _get_session_registry().try_acquire(session_id)
 
 
 def release_session(session_id: str) -> None:
     """Release the in-flight marker for *session_id* (idempotent)."""
-    with _inflight_sessions_lock:
-        _inflight_sessions.discard(session_id)
+    _get_session_registry().release(session_id)
 
 
 # ---------------------------------------------------------------------------

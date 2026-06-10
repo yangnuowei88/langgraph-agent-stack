@@ -54,6 +54,7 @@ import re
 import socket
 import threading
 import time
+import uuid
 from collections import deque
 from collections.abc import Mapping
 from functools import lru_cache
@@ -750,6 +751,143 @@ def create_rate_limiter(
             window_seconds=window_seconds,
         )
     return RateLimiter(max_requests=max_requests, window_seconds=window_seconds)
+
+
+# ---------------------------------------------------------------------------
+# In-flight session registry — dedupes concurrent runs per session_id
+# ---------------------------------------------------------------------------
+
+
+@runtime_checkable
+class SessionRegistryBackend(Protocol):
+    """Protocol for in-flight session registries (in-memory or distributed)."""
+
+    def try_acquire(self, session_id: str) -> bool:
+        """Mark *session_id* in flight; False if a run is already in progress."""
+        ...
+
+    def release(self, session_id: str) -> None:
+        """Release the in-flight marker for *session_id* (idempotent)."""
+        ...
+
+
+class InMemorySessionRegistry:
+    """Per-process in-flight session registry (single replica only)."""
+
+    def __init__(self) -> None:
+        self._sessions: set[str] = set()
+        self._lock = threading.Lock()
+
+    def try_acquire(self, session_id: str) -> bool:
+        with self._lock:
+            if session_id in self._sessions:
+                return False
+            self._sessions.add(session_id)
+            return True
+
+    def release(self, session_id: str) -> None:
+        with self._lock:
+            self._sessions.discard(session_id)
+
+
+class RedisSessionRegistry:
+    """Distributed in-flight session registry backed by Redis.
+
+    ``SET NX EX`` acquires the lock with a TTL so a crashed replica cannot
+    hold a session forever; release is token-guarded (compare-and-delete via
+    Lua) so a replica never deletes a lock it no longer owns after expiry.
+
+    Fail-open: if Redis is unreachable the run is allowed and a warning is
+    logged — dedup is a consistency guard, an outage should never block
+    legitimate traffic (same philosophy as ``RedisRateLimiter``).
+
+    Args:
+        redis_url: Redis connection string.
+        ttl_seconds: Lock lifetime; must exceed the longest expected run
+            (e.g. ``STREAM_TIMEOUT_SECONDS`` plus a safety margin).
+    """
+
+    _RELEASE_SCRIPT = """
+if redis.call('GET', KEYS[1]) == ARGV[1] then
+    return redis.call('DEL', KEYS[1])
+end
+return 0
+"""
+
+    def __init__(self, redis_url: str, ttl_seconds: int = 300) -> None:
+        try:
+            import redis as redis_lib
+
+            self._redis = redis_lib.Redis.from_url(redis_url, decode_responses=True)
+            self._release_script = self._redis.register_script(self._RELEASE_SCRIPT)
+        except ImportError as exc:
+            raise ImportError(
+                "redis package required for SESSION_REGISTRY_BACKEND=redis. "
+                "Install with: uv sync --extra redis"
+            ) from exc
+
+        self.ttl_seconds = ttl_seconds
+        self._prefix = "session-lock:"
+        self._tokens: dict[str, str] = {}
+        self._tokens_lock = threading.Lock()
+
+    def try_acquire(self, session_id: str) -> bool:
+        token = uuid.uuid4().hex
+        try:
+            acquired = self._redis.set(
+                f"{self._prefix}{session_id}", token, nx=True, ex=self.ttl_seconds
+            )
+        except Exception as exc:
+            logger.warning(
+                "Redis session registry unreachable — failing open (run allowed)",
+                extra={"session_id": session_id, "error": str(exc)},
+            )
+            return True
+        if not acquired:
+            return False
+        with self._tokens_lock:
+            self._tokens[session_id] = token
+        return True
+
+    def release(self, session_id: str) -> None:
+        with self._tokens_lock:
+            token = self._tokens.pop(session_id, None)
+        if token is None:
+            return
+        try:
+            self._release_script(keys=[f"{self._prefix}{session_id}"], args=[token])
+        except Exception as exc:
+            logger.warning(
+                "Redis session registry release failed — lock expires via TTL",
+                extra={"session_id": session_id, "error": str(exc)},
+            )
+
+
+def create_session_registry(
+    backend: Literal["memory", "redis"] = "memory",
+    redis_url: str = "",
+    ttl_seconds: int = 300,
+) -> SessionRegistryBackend:
+    """Factory: build a session registry matching the configured backend.
+
+    Args:
+        backend: ``"memory"`` (default, per-process) or ``"redis"``
+            (shared across replicas).
+        redis_url: Required when ``backend="redis"``.
+        ttl_seconds: Redis lock lifetime (ignored for the memory backend).
+
+    Returns:
+        A registry instance satisfying ``SessionRegistryBackend``.
+    """
+    if backend == "redis":
+        if not redis_url:
+            logger.warning(
+                "SESSION_REGISTRY_BACKEND=redis but REDIS_URL is not set — "
+                "falling back to in-memory session registry."
+            )
+            return InMemorySessionRegistry()
+        return RedisSessionRegistry(redis_url=redis_url, ttl_seconds=ttl_seconds)
+    return InMemorySessionRegistry()
 
 
 # ---------------------------------------------------------------------------

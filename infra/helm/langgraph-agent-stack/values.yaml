@@ -60,6 +60,9 @@ config:
   sqlitePath: /app/data/memory.db
   maxTokens: "4096"
   rateLimitBackend: "memory"  # "redis" requis pour multi-replica (partage l'état entre pods)
+  # Registre des runs en vol (dédup 409 par session_id). "redis" requis pour
+  # multi-replica, sinon le verrou ne tient que dans un seul pod.
+  sessionRegistryBackend: "memory"
   # Derrière un Ingress/LB : activer la confiance proxy pour que le rate limit
   # utilise l'IP réelle du client (X-Forwarded-For), pas l'IP du load balancer.
   trustProxyHeaders: false

@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 
 import api.state as state
 from api.router_factory import SESSION_IN_FLIGHT_DETAIL
+from core.security import InMemorySessionRegistry
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -30,10 +31,18 @@ from api.router_factory import SESSION_IN_FLIGHT_DETAIL
 
 @pytest.fixture(autouse=True)
 def _clean_inflight_sessions():
-    """Ensure the in-flight registry is empty before and after each test."""
-    state._inflight_sessions.clear()
+    """Swap in a fresh in-memory registry before and after each test."""
+    state.session_registry = InMemorySessionRegistry()
     yield
-    state._inflight_sessions.clear()
+    state.session_registry = InMemorySessionRegistry()
+
+
+def _session_is_free(session_id: str) -> bool:
+    """True if no run is in flight for *session_id* (acquire-and-release probe)."""
+    if not state.try_acquire_session(session_id):
+        return False
+    state.release_session(session_id)
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +84,7 @@ def test_sequential_runs_with_same_session_id_succeed(
         )
         assert response.status_code == 200
         assert response.json()["session_id"] == "sess-seq"
-    assert "sess-seq" not in state._inflight_sessions
+    assert _session_is_free("sess-seq")
 
 
 def test_run_returns_409_when_session_in_flight(test_client: TestClient) -> None:
@@ -125,7 +134,7 @@ def test_run_stream_releases_lock_at_end_of_generator(
     )
     assert response.status_code == 200
     assert "data:" in response.text  # stream fully consumed by TestClient
-    assert "sess-stream" not in state._inflight_sessions
+    assert _session_is_free("sess-stream")
 
     # A follow-up run on the same session succeeds.
     response = test_client.post(
@@ -147,7 +156,7 @@ def test_run_without_session_id_is_not_locked(test_client: TestClient) -> None:
     finally:
         state.release_session("sess-other")
     # Only the manually acquired session was ever registered.
-    assert state._inflight_sessions == set()
+    assert _session_is_free("sess-other")
 
 
 # ---------------------------------------------------------------------------
@@ -169,7 +178,7 @@ def test_save_run_exception_does_not_fail_request(test_client: TestClient) -> No
     assert response.status_code == 200
     broken_memory.save_run.assert_called_once()
     # The lock must be released even when persistence fails.
-    assert "sess-broken" not in state._inflight_sessions
+    assert _session_is_free("sess-broken")
 
 
 def test_slow_save_run_does_not_block_request(test_client: TestClient) -> None:
@@ -191,4 +200,107 @@ def test_slow_save_run_does_not_block_request(test_client: TestClient) -> None:
     assert response.status_code == 200
     assert elapsed < 5.0  # bounded by the patched timeout, not the slow backend
     slow_memory.save_run.assert_called_once()
-    assert "sess-slow" not in state._inflight_sessions
+    assert _session_is_free("sess-slow")
+
+
+# ---------------------------------------------------------------------------
+# Session registry backends (core/security.py)
+# ---------------------------------------------------------------------------
+
+
+class TestCreateSessionRegistry:
+    def test_memory_backend_returns_in_memory_registry(self) -> None:
+        from core.security import create_session_registry
+
+        registry = create_session_registry(backend="memory")
+        assert isinstance(registry, InMemorySessionRegistry)
+
+    def test_redis_backend_without_url_falls_back(self) -> None:
+        """Factory with backend='redis' but no URL falls back to in-memory."""
+        from core.security import create_session_registry
+
+        registry = create_session_registry(backend="redis", redis_url="")
+        assert isinstance(registry, InMemorySessionRegistry)
+
+    def test_redis_backend_with_url_creates_redis_registry(self) -> None:
+        """Factory with backend='redis' and a URL creates RedisSessionRegistry."""
+        from core.security import RedisSessionRegistry, create_session_registry
+
+        mock_redis = MagicMock()
+        mock_redis.register_script.return_value = MagicMock()
+
+        try:
+            import redis as redis_lib
+
+            with patch.object(redis_lib.Redis, "from_url", return_value=mock_redis):
+                registry = create_session_registry(
+                    backend="redis",
+                    redis_url="redis://localhost:6379/0",
+                    ttl_seconds=120,
+                )
+                assert isinstance(registry, RedisSessionRegistry)
+                assert registry.ttl_seconds == 120
+        except ImportError:
+            pytest.skip("redis package not installed")
+
+
+class TestRedisSessionRegistry:
+    def _make_registry(self, mock_redis: MagicMock):
+        import redis as redis_lib
+
+        from core.security import RedisSessionRegistry
+
+        with patch.object(redis_lib.Redis, "from_url", return_value=mock_redis):
+            return RedisSessionRegistry(
+                redis_url="redis://localhost:6379/0", ttl_seconds=60
+            )
+
+    def test_acquire_uses_set_nx_ex_and_release_deletes_own_token(self) -> None:
+        """Acquire issues SET NX EX; release runs the compare-and-delete script."""
+        pytest.importorskip("redis")
+        mock_redis = MagicMock()
+        mock_redis.set.return_value = True
+        mock_script = MagicMock()
+        mock_redis.register_script.return_value = mock_script
+
+        registry = self._make_registry(mock_redis)
+        assert registry.try_acquire("sess-redis") is True
+
+        _, kwargs = mock_redis.set.call_args
+        assert kwargs == {"nx": True, "ex": 60}
+        (key, token), _ = mock_redis.set.call_args
+        assert key == "session-lock:sess-redis"
+
+        registry.release("sess-redis")
+        mock_script.assert_called_once_with(keys=[key], args=[token])
+
+    def test_acquire_returns_false_when_lock_held(self) -> None:
+        """SET NX returning None (key exists) means another run is in flight."""
+        pytest.importorskip("redis")
+        mock_redis = MagicMock()
+        mock_redis.set.return_value = None
+        mock_redis.register_script.return_value = MagicMock()
+
+        registry = self._make_registry(mock_redis)
+        assert registry.try_acquire("sess-held") is False
+
+    def test_acquire_fails_open_when_redis_down(self) -> None:
+        """An unreachable Redis must allow the run (fail-open) without raising."""
+        pytest.importorskip("redis")
+        mock_redis = MagicMock()
+        mock_redis.set.side_effect = ConnectionError("Redis down")
+        mock_redis.register_script.return_value = MagicMock()
+
+        registry = self._make_registry(mock_redis)
+        assert registry.try_acquire("sess-down") is True
+
+    def test_release_without_owned_token_is_noop(self) -> None:
+        """Releasing a session this process never acquired must not touch Redis."""
+        pytest.importorskip("redis")
+        mock_redis = MagicMock()
+        mock_script = MagicMock()
+        mock_redis.register_script.return_value = mock_script
+
+        registry = self._make_registry(mock_redis)
+        registry.release("sess-foreign")
+        mock_script.assert_not_called()
