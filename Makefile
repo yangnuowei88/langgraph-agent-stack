@@ -8,7 +8,7 @@ HELM_CHART   := infra/helm/langgraph-agent-stack
 # ─── Phony Targets ───────────────────────────────────────────────────────────
 
 .PHONY: help install run run-ollama \
-        test test-cov lint format typecheck check check-security \
+        test test-cov eval lint format typecheck check check-security \
         docker-build docker-run docker-redis docker-down docker-smoke \
         helm-lint helm-dev helm-prod helm-dry-run helm-uninstall infra-check \
         tf-init tf-plan tf-apply tf-fmt \
@@ -36,6 +36,9 @@ run-ollama: ## Start the API server using Ollama as LLM provider
 
 test: ## Run the test suite with verbose output
 	$(UV) run pytest tests/ -v
+
+eval: ## Run the golden-dataset pack evaluations (deterministic, no network)
+	$(UV) run python -m evals --all
 
 test-cov: ## Run tests with coverage report (kernel, API, domain packs, connectors)
 	$(UV) run pytest tests/ \

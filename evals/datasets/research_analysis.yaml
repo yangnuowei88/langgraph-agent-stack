@@ -1,0 +1,44 @@
+# Golden dataset — research_analysis pack (full two-agent pipeline).
+# The scripted sequence mirrors the real LLM call order:
+#   1 query expansion, 2 sufficiency validation, 3 research summary,
+#   4 analysis insights, 5 patterns/implications, 6 executive summary.
+cases:
+  - id: quantum_pipeline
+    input:
+      query: "What is quantum computing?"
+    mock_responses:
+      - '["qubit hardware", "error correction"]'
+      - '{"sufficient": true, "reason": "coverage ok"}'
+      - '{"summary": "Quantum research summary.", "confidence": 0.85}'
+      - '{"insights": ["Qubits enable superposition.", "Error correction is the bottleneck."], "confidence": 0.82}'
+      - '{"patterns": ["Rapid hardware iteration."], "implications": ["Cryptography must adapt."]}'
+      - "Executive summary: quantum computing is advancing quickly with hardware iteration outpacing error correction."
+    checks:
+      required_fields: [executive_summary, key_insights, patterns, implications, confidence]
+      min_length:
+        key_insights: 2
+        patterns: 1
+        implications: 1
+      contains:
+        executive_summary: "quantum"
+      numeric_range:
+        confidence: [0.5, 1.0]
+
+  - id: market_pipeline
+    input:
+      query: "State of the EV battery market"
+    mock_responses:
+      - '["battery chemistry", "supply chain"]'
+      - '{"sufficient": true, "reason": "coverage ok"}'
+      - '{"summary": "EV battery market research summary.", "confidence": 0.8}'
+      - '{"insights": ["LFP chemistry is gaining share."], "confidence": 0.78}'
+      - '{"patterns": ["Vertical integration."], "implications": ["Raw material exposure."]}'
+      - "Executive summary: the EV battery market is consolidating around LFP chemistry."
+    checks:
+      required_fields: [executive_summary, key_insights]
+      min_length:
+        key_insights: 1
+      contains:
+        executive_summary: "EV battery"
+      numeric_range:
+        confidence: [0.5, 1.0]

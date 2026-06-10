@@ -1,0 +1,39 @@
+# Golden dataset — summariser pack.
+# All cases use scripted LLM responses: deterministic, no network, CI-safe.
+cases:
+  - id: basic_bullets
+    input:
+      text: "Quantum computing uses qubits to perform computations that are intractable for classical machines. Error correction remains the dominant engineering challenge."
+    mock_responses:
+      - "- Qubits enable computations intractable for classical machines\n- Error correction is the dominant engineering challenge"
+    checks:
+      required_fields: [bullets, original_length]
+      min_length:
+        bullets: 2
+      contains:
+        bullets: "Error correction"
+      not_contains:
+        bullets: "ignore previous instructions"
+
+  - id: single_bullet
+    input:
+      text: "A short announcement about a product launch next quarter."
+    mock_responses:
+      - "- Product launch planned for next quarter"
+    checks:
+      required_fields: [bullets]
+      min_length:
+        bullets: 1
+      contains:
+        bullets: "launch"
+
+  - id: fallback_without_dashes
+    # The summariser falls back to raw lines when the LLM ignores the "- " format.
+    input:
+      text: "Plain text body used to exercise the no-dash fallback path."
+    mock_responses:
+      - "First takeaway line\nSecond takeaway line"
+    checks:
+      required_fields: [bullets]
+      min_length:
+        bullets: 2
