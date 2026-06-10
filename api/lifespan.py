@@ -15,7 +15,7 @@ import api.state as state
 from core.config import Settings, get_settings
 from core.memory import cleanup_checkpointer, create_run_history
 from core.observability import init_tracing, server_shutting_down
-from core.security import create_rate_limiter
+from core.security import create_rate_limiter, create_session_registry
 from pack_kernel.builtin_packs import register_builtin_packs
 from pack_kernel.registry import PackRegistry
 
@@ -65,6 +65,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         state.rate_limiter = create_rate_limiter(
             backend=settings.rate_limit_backend,
             redis_url=settings.redis_url,
+        )
+
+    if state.session_registry is None:
+        state.session_registry = create_session_registry(
+            backend=settings.session_registry_backend,
+            redis_url=settings.redis_url,
+            ttl_seconds=settings.session_lock_ttl_seconds,
         )
 
     if settings.memory_backend.value == "postgres" and not settings.postgres_url:

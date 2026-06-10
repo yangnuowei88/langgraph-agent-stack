@@ -332,6 +332,26 @@ class Settings(BaseSettings):
         ),
     )
 
+    session_registry_backend: Literal["memory", "redis"] = Field(
+        default="memory",
+        validation_alias="SESSION_REGISTRY_BACKEND",
+        description=(
+            "In-flight session registry backend. 'memory' (default) dedupes "
+            "concurrent runs per session within a single process; 'redis' "
+            "shares the locks across replicas (requires REDIS_URL)."
+        ),
+    )
+    session_lock_ttl_seconds: int = Field(
+        default=300,
+        ge=10,
+        validation_alias="SESSION_LOCK_TTL_SECONDS",
+        description=(
+            "Lifetime of Redis session locks. Must exceed the longest "
+            "expected run (STREAM_TIMEOUT_SECONDS plus a margin) so a "
+            "crashed replica cannot block a session forever."
+        ),
+    )
+
     api_key: str | None = Field(
         default=None,
         validation_alias="API_KEY",
