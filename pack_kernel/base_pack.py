@@ -200,9 +200,7 @@ class BaseDomainPack(abc.ABC):
         if self._executor is None:
             with self._executor_lock:
                 if self._executor is None:
-                    prefix = (
-                        self.executor_thread_name_prefix or f"{self.pack_id}-pack"
-                    )
+                    prefix = self.executor_thread_name_prefix or f"{self.pack_id}-pack"
                     self._executor = ThreadPoolExecutor(
                         max_workers=get_settings().thread_pool_max_workers,
                         thread_name_prefix=prefix,
