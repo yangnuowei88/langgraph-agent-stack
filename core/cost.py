@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -430,7 +431,13 @@ def _compute_cost(model_id: str, input_tokens: int, output_tokens: int) -> float
 
 
 class CostTracker(BaseCallbackHandler):
-    """LangChain callback handler that accumulates LLM token usage and cost."""
+    """LangChain callback handler that accumulates LLM token usage and cost.
+
+    A single instance may be shared by several agents within one pipeline run
+    so that the budget applies to the *cumulative* spend of the run.  Counter
+    mutations are guarded by a ``threading.Lock`` because agents may execute
+    concurrently (e.g. inside a ``ThreadPoolExecutor``).
+    """
 
     def __init__(self, budget_usd: float | None = None) -> None:
         super().__init__()
@@ -439,6 +446,7 @@ class CostTracker(BaseCallbackHandler):
         self.total_cost_usd: float = 0.0
         self.input_tokens: int = 0
         self.output_tokens: int = 0
+        self._lock = threading.Lock()
 
     @staticmethod
     def _extract_tokens_from_result(response: LLMResult) -> TokenUsage:
@@ -583,7 +591,8 @@ class CostTracker(BaseCallbackHandler):
         estimate = estimate_worst_case_call_cost(
             model_id, input_tokens, max_output_tokens
         )
-        projected = self.total_cost_usd + estimate
+        with self._lock:
+            projected = self.total_cost_usd + estimate
         if projected > self.budget_usd:
             raise BudgetExceededError(budget=self.budget_usd, actual=projected)
 
@@ -634,9 +643,11 @@ class CostTracker(BaseCallbackHandler):
             batch=usage.batch,
         )
 
-        self.input_tokens += usage.input_tokens
-        self.output_tokens += usage.output_tokens
-        self.total_cost_usd += call_cost
+        with self._lock:
+            self.input_tokens += usage.input_tokens
+            self.output_tokens += usage.output_tokens
+            self.total_cost_usd += call_cost
+            total_cost_usd = self.total_cost_usd
 
         if _PROMETHEUS_AVAILABLE and pack_run_cost_usd_total is not None:
             pack_run_cost_usd_total.labels(model=usage.model_id or "unknown").inc(
@@ -653,12 +664,12 @@ class CostTracker(BaseCallbackHandler):
                 "cache_write_tokens": usage.cache_write_tokens,
                 "batch": usage.batch,
                 "call_cost_usd": call_cost,
-                "total_cost_usd": self.total_cost_usd,
+                "total_cost_usd": total_cost_usd,
             },
         )
 
-        if self.budget_usd is not None and self.total_cost_usd > self.budget_usd:
+        if self.budget_usd is not None and total_cost_usd > self.budget_usd:
             raise BudgetExceededError(
                 budget=self.budget_usd,
-                actual=self.total_cost_usd,
+                actual=total_cost_usd,
             )

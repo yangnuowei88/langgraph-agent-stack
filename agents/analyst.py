@@ -38,6 +38,7 @@ from agents.models import (
     AnalysisReport,  # backward-compat re-export
     ResearchResult,
 )
+from core.cost import CostTracker
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,7 @@ class AnalystAgent(BaseAgent):
         llm: BaseChatModel | None = None,
         checkpointer: Any | None = None,
         budget_usd: float | None = None,
+        cost_tracker: CostTracker | None = None,
     ) -> None:
         super().__init__(
             name="AnalystAgent",
@@ -80,6 +82,7 @@ class AnalystAgent(BaseAgent):
             llm=llm,
             checkpointer=checkpointer,
             budget_usd=budget_usd,
+            cost_tracker=cost_tracker,
         )
 
     # ------------------------------------------------------------------

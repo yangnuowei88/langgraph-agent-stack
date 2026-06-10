@@ -154,6 +154,13 @@ class BaseAgent(abc.ABC):
             Set to ``0.0`` is valid but will immediately raise
             ``AgentBudgetExceededError`` on the first LLM call that
             incurs any cost — use only for testing.
+            Ignored when ``cost_tracker`` is provided.
+        cost_tracker: Optional pre-built ``CostTracker`` shared across several
+            agents of the same pipeline run.  When provided, the agent attaches
+            this tracker to its LLM instead of creating its own, so the
+            tracker's budget applies to the *cumulative* spend of all agents
+            sharing it.  Enforcement semantics are unchanged — the same
+            ``AgentBudgetExceededError`` is raised on overrun.
 
     Raises:
         AgentConfigurationError: If the LLM client cannot be initialised
@@ -168,6 +175,7 @@ class BaseAgent(abc.ABC):
         llm: BaseChatModel | None = None,
         checkpointer: Any | None = None,
         budget_usd: float | None = None,
+        cost_tracker: CostTracker | None = None,
     ) -> None:
         self.name: str = name
         self.thread_id: str = thread_id or str(uuid.uuid4())
@@ -189,15 +197,22 @@ class BaseAgent(abc.ABC):
                     f"'{_settings.llm_provider}': {exc}"
                 ) from exc
 
-        # Resolve effective budget: explicit argument takes precedence over
-        # the settings-level default; None on both sides disables tracking.
-        _effective_budget: float | None = (
-            budget_usd if budget_usd is not None else _settings.pack_default_budget_usd
-        )
+        # Resolve the effective tracker. An injected tracker (shared across a
+        # pipeline run) takes precedence and is attached as-is so the budget
+        # applies to the cumulative spend of every agent sharing it.
+        # Otherwise an explicit budget_usd argument takes precedence over the
+        # settings-level default; None on both sides disables tracking.
+        self._cost_tracker: CostTracker | None = cost_tracker
+        if self._cost_tracker is None:
+            _effective_budget: float | None = (
+                budget_usd
+                if budget_usd is not None
+                else _settings.pack_default_budget_usd
+            )
+            if _effective_budget is not None:
+                self._cost_tracker = CostTracker(budget_usd=_effective_budget)
 
-        self._cost_tracker: CostTracker | None = None
-        if _effective_budget is not None:
-            self._cost_tracker = CostTracker(budget_usd=_effective_budget)
+        if self._cost_tracker is not None:
             # with_config returns a new Runnable wrapper; it does not mutate the
             # underlying BaseChatModel object. If _shared_llm is passed from the
             # API layer, this call creates a per-agent view with the cost tracker

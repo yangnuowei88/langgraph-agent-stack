@@ -429,3 +429,144 @@ def test_anthropic_response_metadata_model_id_extracted() -> None:
     expected = _compute_cost("claude-3-5-sonnet-20241022", 500, 250)
     assert tracker.total_cost_usd == pytest.approx(expected)
     assert tracker.total_cost_usd > 0.0
+
+
+# ---------------------------------------------------------------------------
+# Shared CostTracker across agents (one budget per pipeline run)
+# ---------------------------------------------------------------------------
+
+
+class _FakeLLM:
+    """Minimal chat-model stand-in that fires attached CostTracker callbacks.
+
+    ``with_config`` mirrors LangChain semantics: it returns a new view with
+    the callbacks attached, leaving the original instance unmodified.
+    """
+
+    def __init__(self, input_tokens: int = 1000, output_tokens: int = 500) -> None:
+        self.callbacks: list = []
+        self._input_tokens = input_tokens
+        self._output_tokens = output_tokens
+
+    def with_config(self, config: dict) -> _FakeLLM:
+        clone = _FakeLLM(self._input_tokens, self._output_tokens)
+        clone.callbacks = list(config.get("callbacks", []))
+        return clone
+
+    def bind_tools(self, tools: list) -> _FakeLLM:
+        return self
+
+    def invoke(self, messages, **kwargs):
+        result = _make_llm_result(
+            "claude-3-5-sonnet-20241022", self._input_tokens, self._output_tokens
+        )
+        for cb in self.callbacks:
+            cb.on_llm_end(result)
+        return AIMessage(content="ok")
+
+
+def _per_call_cost() -> float:
+    return _compute_cost("claude-3-5-sonnet-20241022", 1000, 500)
+
+
+def test_agent_uses_injected_tracker_instead_of_creating_one() -> None:
+    """BaseAgent must adopt an injected CostTracker rather than build its own."""
+    from agents.researcher import ResearchAgent
+
+    shared = CostTracker(budget_usd=1.0)
+    agent = ResearchAgent(llm=_FakeLLM(), cost_tracker=shared)
+
+    assert agent._cost_tracker is shared
+
+
+def test_agent_auto_creates_tracker_when_no_tracker_injected() -> None:
+    """Without injection, budget_usd still produces a per-agent tracker (legacy)."""
+    from agents.researcher import ResearchAgent
+
+    agent = ResearchAgent(llm=_FakeLLM(), budget_usd=0.5)
+
+    assert agent._cost_tracker is not None
+    assert agent._cost_tracker.budget_usd == pytest.approx(0.5)
+
+
+def test_shared_tracker_enforces_cumulative_budget_across_two_agents() -> None:
+    """Second agent's call must fail when the *cumulative* spend exceeds budget.
+
+    Budget = 1.5x one call's cost: each agent alone stays under budget, but
+    the second call pushes the shared total over the ceiling.
+    """
+    from langchain_core.messages import HumanMessage
+
+    from agents.analyst import AnalystAgent
+    from agents.base_agent import AgentBudgetExceededError
+    from agents.researcher import ResearchAgent
+
+    shared = CostTracker(budget_usd=_per_call_cost() * 1.5)
+    agent_a = ResearchAgent(llm=_FakeLLM(), cost_tracker=shared)
+    agent_b = AnalystAgent(llm=_FakeLLM(), cost_tracker=shared)
+
+    # First call (agent A): under budget, must succeed.
+    agent_a._invoke_llm_with_retry([HumanMessage(content="hi")], max_retries=0)
+    assert shared.total_cost_usd == pytest.approx(_per_call_cost())
+
+    # Second call (agent B): individually under budget, cumulatively over.
+    with pytest.raises(AgentBudgetExceededError):
+        agent_b._invoke_llm_with_retry([HumanMessage(content="hi")], max_retries=0)
+
+
+def test_shared_tracker_accumulates_tokens_and_cost_across_two_agents() -> None:
+    """Tokens and cost from both agents must accumulate on the shared tracker."""
+    from langchain_core.messages import HumanMessage
+
+    from agents.analyst import AnalystAgent
+    from agents.researcher import ResearchAgent
+
+    shared = CostTracker(budget_usd=None)
+    agent_a = ResearchAgent(llm=_FakeLLM(), cost_tracker=shared)
+    agent_b = AnalystAgent(llm=_FakeLLM(), cost_tracker=shared)
+
+    agent_a._invoke_llm_with_retry([HumanMessage(content="hi")], max_retries=0)
+    agent_b._invoke_llm_with_retry([HumanMessage(content="hi")], max_retries=0)
+
+    assert shared.input_tokens == 2000
+    assert shared.output_tokens == 1000
+    assert shared.total_cost_usd == pytest.approx(2 * _per_call_cost())
+    # Both agents report the cumulative run cost via the shared tracker.
+    assert agent_a.cost_usd == pytest.approx(shared.total_cost_usd)
+    assert agent_b.cost_usd == pytest.approx(shared.total_cost_usd)
+
+
+def test_research_analysis_pack_creates_one_shared_tracker() -> None:
+    """ResearchAnalysisPack must own a single run-level tracker with the budget."""
+    from domain_packs.research.research_analysis.pack import ResearchAnalysisPack
+
+    pack = ResearchAnalysisPack(budget_usd=3.0)
+    try:
+        assert isinstance(pack._cost_tracker, CostTracker)
+        assert pack._cost_tracker.budget_usd == pytest.approx(3.0)
+        assert pack.cost_usd == 0.0
+    finally:
+        pack.close()
+
+
+def test_cost_tracker_concurrent_on_llm_end_totals_exact() -> None:
+    """Counter mutations are lock-guarded: 2 threads x N callbacks sum exactly."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    tracker = CostTracker(budget_usd=None)
+    n_calls = 200
+    result = _make_llm_result("claude-3-5-sonnet-20241022", 10, 5)
+
+    def _worker() -> None:
+        for _ in range(n_calls):
+            tracker.on_llm_end(result)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(_worker) for _ in range(2)]
+        for future in futures:
+            future.result()
+
+    assert tracker.input_tokens == 2 * n_calls * 10
+    assert tracker.output_tokens == 2 * n_calls * 5
+    expected = 2 * n_calls * _compute_cost("claude-3-5-sonnet-20241022", 10, 5)
+    assert tracker.total_cost_usd == pytest.approx(expected)
