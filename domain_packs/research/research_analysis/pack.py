@@ -29,7 +29,12 @@ from agents.base_agent import (
     AgentValidationError,
 )
 from agents.researcher import ResearchAgent, ResearchResult
-from connectors.base import BaseConnector, ConnectorRequest, ConnectorResult
+from connectors.base import (
+    BaseConnector,
+    ConnectorRequest,
+    ConnectorResult,
+    record_to_source_ref,
+)
 from core.config import get_settings
 from core.cost import CostTracker
 from core.memory import create_checkpointer
@@ -208,13 +213,14 @@ class ResearchAnalysisPack(BaseDomainPack):
 
         extra_findings: list[str] = []
         extra_sources: list[str] = []
-        for record in connector_result.records:
+        source_refs: list[dict[str, Any]] = []
+        for index, record in enumerate(connector_result.records, start=1):
+            ref = record_to_source_ref(record, index)
+            source_refs.append(ref.model_dump())
             snippet = record.get("snippet") or record.get("text")
             if snippet:
                 extra_findings.append(str(snippet))
-            source = record.get("source")
-            if source:
-                extra_sources.append(str(source))
+            extra_sources.append(ref.citation())
 
         metadata = dict(result.metadata)
         metadata["connector"] = {
@@ -222,6 +228,10 @@ class ResearchAnalysisPack(BaseDomainPack):
             "record_count": len(connector_result.records),
             "fetch_metadata": connector_result.metadata,
         }
+        metadata["source_refs"] = [
+            *metadata.get("source_refs", []),
+            *source_refs,
+        ]
 
         return ResearchResult(
             query=result.query,
