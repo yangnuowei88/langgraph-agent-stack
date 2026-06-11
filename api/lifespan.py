@@ -112,6 +112,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             "Check pack_kernel/builtin_packs.py."
         ) from exc
 
+    from pack_kernel.plugins import register_plugin_packs
+
+    plugin_pack_ids = register_plugin_packs(
+        enabled=settings.pack_plugins_enabled,
+        allowlist=settings.resolved_pack_plugins_allowlist,
+    )
+    if plugin_pack_ids:
+        logger.info(
+            "Plugin packs loaded",
+            extra={"pack_ids": plugin_pack_ids},
+        )
+
     from connectors.resolver import resolve_connector
 
     state.shared_connector = resolve_connector(settings)
