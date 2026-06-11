@@ -29,7 +29,13 @@ from agents.base_agent import (
     AgentValidationError,
     extract_text_content,
 )
-from connectors.base import BaseConnector, ConnectorRequest, ConnectorResult
+from connectors.base import (
+    BaseConnector,
+    ConnectorRequest,
+    ConnectorResult,
+    SourceRef,
+    record_to_source_ref,
+)
 from core.config import get_settings
 from core.memory import create_checkpointer
 from core.observability import trace_span
@@ -61,13 +67,21 @@ class _StructuredState(TypedDict, total=False):
 def _fetch_connector_result_sync(
     connector: BaseConnector, query: str
 ) -> ConnectorResult:
-    """Run async ``connector.fetch`` from a sync LangGraph node."""
+    """Run async ``connector.fetch`` from a sync LangGraph node.
+
+    Pack nodes run in plain ``ThreadPoolExecutor`` threads, which are not
+    anyio worker threads — ``anyio.from_thread.run`` only works in the
+    latter, so fall back to a private event loop otherwise.
+    """
     request = ConnectorRequest(query=query)
 
     async def _fetch() -> ConnectorResult:
         return await connector.fetch(request)
 
-    return anyio.from_thread.run(_fetch)
+    try:
+        return anyio.from_thread.run(_fetch)
+    except RuntimeError:
+        return anyio.run(_fetch)
 
 
 # Maximum raw JSON blob size accepted from LLM responses (512 KiB).
@@ -117,6 +131,9 @@ class StructuredLLMPack(BaseDomainPack):
         self.run_id = run_id or str(uuid.uuid4())
         self._checkpointer = checkpointer or create_checkpointer(get_settings())
         self._connector = connector
+        #: SourceRefs for the connector snippets used on the last reference-text
+        #: resolution (audit trail for citations). Reset on each resolution.
+        self.last_source_refs: list[SourceRef] = []
         self._graph = self._build_graph()
 
     def _build_graph(self) -> Any:
@@ -188,6 +205,7 @@ class StructuredLLMPack(BaseDomainPack):
                 value = getattr(inp, field)
                 if value:
                     parts.append(str(value))
+        self.last_source_refs = []
         if self._connector is not None:
             query = self.primary_text(inp)
             try:
@@ -211,10 +229,31 @@ class StructuredLLMPack(BaseDomainPack):
                             self.pack_id,
                         )
                         continue
-                    parts.append(text)
+                    ref = record_to_source_ref(record, len(self.last_source_refs) + 1)
+                    self.last_source_refs.append(ref)
+                    parts.append(f"[{ref.id}] {text}")
             except Exception as exc:
                 logger.warning("Connector fetch failed for %s: %s", self.pack_id, exc)
         return "\n\n---\n\n".join(parts)
+
+    def _inject_source_citations(self, output: BaseModel) -> BaseModel:
+        """Fill an existing ``sources`` output field with citation strings.
+
+        Only applies when the pack's ``output_schema`` already declares a
+        ``sources`` field (no schema change) and connector snippets were used
+        for the last reference-text resolution. Citations use the stable
+        ``[id] title — url`` format from :meth:`SourceRef.citation`.
+        """
+        if not self.last_source_refs:
+            return output
+        if "sources" not in self.output_schema.model_fields:
+            return output
+        current = getattr(output, "sources", None)
+        existing = [str(item) for item in current] if isinstance(current, list) else []
+        citations = [ref.citation() for ref in self.last_source_refs]
+        return output.model_copy(
+            update={"sources": list(dict.fromkeys([*existing, *citations]))}
+        )
 
     def _run_node(self, state: _StructuredState) -> _StructuredState:
         inp = self.input_schema.model_validate_json(state.get("input_json", "{}"))
@@ -242,6 +281,7 @@ class StructuredLLMPack(BaseDomainPack):
                     run_id=self.run_id,
                     llm=self._llm,
                 )
+                output = self._inject_source_citations(output)
                 return {
                     **state,
                     "output": output.model_dump(),

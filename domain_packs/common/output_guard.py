@@ -25,6 +25,19 @@ from domain_packs.common.compliance import REGULATED_PACK_IDS
 
 logger = logging.getLogger(__name__)
 
+
+def _record_guard_event(pack_id: str, action: str) -> None:
+    """Increment ``output_guard_findings_total{pack_id, action}`` (no-op without Prometheus).
+
+    ``pack_id`` cardinality is bounded by :data:`REGULATED_PACK_IDS`;
+    ``action`` is ``"audit"`` or ``"fail_closed"``.
+    """
+    from core.observability import output_guard_findings_total
+
+    if output_guard_findings_total is not None:
+        output_guard_findings_total.labels(pack_id=pack_id, action=action).inc()
+
+
 # (pattern_id, compiled regex, fail_closed_when_matched)
 _OUTPUT_INTEGRITY_PATTERNS: tuple[tuple[str, re.Pattern[str], bool], ...] = (
     (
@@ -177,6 +190,7 @@ def audit_output_integrity_findings(
     """Emit a structured audit log entry for suspicious LLM output."""
     if not findings:
         return
+    _record_guard_event(pack_id, "audit")
     logger.warning(
         "Regulated pack output integrity findings",
         extra=sanitize_log_data(
@@ -232,6 +246,7 @@ def guard_llm_output(
 
     critical = [finding for finding in findings if finding.fail_closed]
     if critical:
+        _record_guard_event(pack_id, "fail_closed")
         first = critical[0]
         raise ValueError(
             "Output failed integrity check "

@@ -14,8 +14,10 @@ without touching the graph structure.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Literal
 
 from langchain_core.language_models import BaseChatModel
@@ -31,6 +33,12 @@ from agents.base_agent import (
     input_validator,
 )
 from agents.models import ResearchResult  # backward-compat re-export
+from connectors.base import (
+    BaseConnector,
+    ConnectorRequest,
+    ConnectorResult,
+    record_to_source_ref,
+)
 from core.config import get_settings
 from core.cost import CostTracker
 from core.security import wrap_untrusted_content
@@ -57,10 +65,17 @@ class ResearchAgent(BaseAgent):
 
     Args:
         thread_id: Optional stable ID for resuming a checkpointed session.
+        connector: Optional retrieval adapter. When set, records returned by
+            ``connector.fetch()`` are normalized into ``SourceRef`` objects:
+            their snippets join the findings, ``sources`` gains traceable
+            citation strings (``[id] title — url``) and the final
+            ``ResearchResult.metadata`` exposes the full provenance under
+            ``"source_refs"``.
     """
 
     _CTX_FINDINGS = "findings"
     _CTX_SOURCES = "sources"
+    _CTX_SOURCE_REFS = "source_refs"
     _CTX_ITERATIONS = "research_iterations"
     _CTX_RESULT = "research_result"
 
@@ -71,7 +86,9 @@ class ResearchAgent(BaseAgent):
         checkpointer: Any | None = None,
         budget_usd: float | None = None,
         cost_tracker: CostTracker | None = None,
+        connector: BaseConnector | None = None,
     ) -> None:
+        self._connector = connector
         super().__init__(
             name="ResearchAgent",
             thread_id=thread_id,
@@ -130,6 +147,9 @@ class ResearchAgent(BaseAgent):
         iterations: int = state.get("context", {}).get(self._CTX_ITERATIONS, 0)
         existing: list[str] = state.get("context", {}).get(self._CTX_FINDINGS, [])
         sources: list[str] = state.get("context", {}).get(self._CTX_SOURCES, [])
+        source_refs: list[dict[str, Any]] = state.get("context", {}).get(
+            self._CTX_SOURCE_REFS, []
+        )
 
         expansion_prompt = (
             f"You are a research assistant. The user wants to research: '{query}'.\n"
@@ -171,10 +191,32 @@ class ResearchAgent(BaseAgent):
                         if src_url:
                             new_sources.append(src_url)
 
+        new_source_refs: list[dict[str, Any]] = []
+        if self._connector is not None:
+            seen_ids = {str(ref.get("id", "")) for ref in source_refs}
+            for record in self._fetch_connector_records(str(query)):
+                ref = record_to_source_ref(
+                    record, len(source_refs) + len(new_source_refs) + 1
+                )
+                if ref.id in seen_ids:
+                    continue
+                seen_ids.add(ref.id)
+                new_source_refs.append(ref.model_dump())
+                snippet = (
+                    record.get("snippet")
+                    or record.get("text")
+                    or record.get("content")
+                    or ref.snippet
+                )
+                if snippet:
+                    new_findings.append(str(snippet))
+                new_sources.append(ref.citation())
+
         updated_context = {
             **state.get("context", {}),
             self._CTX_FINDINGS: existing + new_findings,
             self._CTX_SOURCES: list(dict.fromkeys(sources + new_sources)),
+            self._CTX_SOURCE_REFS: source_refs + new_source_refs,
             self._CTX_ITERATIONS: iterations + 1,
         }
 
@@ -188,6 +230,28 @@ class ResearchAgent(BaseAgent):
         )
 
         return {"step_count": state["step_count"], "context": updated_context}
+
+    def _fetch_connector_records(self, query: str) -> tuple[dict[str, Any], ...]:
+        """Fetch records from the optional connector (sync node — best effort)."""
+        connector = self._connector
+        if connector is None:
+            return ()
+
+        request = ConnectorRequest(query=query)
+
+        async def _fetch() -> ConnectorResult:
+            return await connector.fetch(request)
+
+        try:
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                return asyncio.run(_fetch()).records
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                return pool.submit(asyncio.run, _fetch()).result().records
+        except Exception:
+            self._log.warning("Connector fetch failed — continuing", exc_info=True)
+            return ()
 
     def _node_validate(self, state: AgentState) -> dict[str, Any]:
         """
@@ -312,13 +376,20 @@ class ResearchAgent(BaseAgent):
                 exc_info=True,
             )
 
+        metadata: dict[str, Any] = dict(state.get("metadata", {}))
+        source_refs: list[dict[str, Any]] = state.get("context", {}).get(
+            self._CTX_SOURCE_REFS, []
+        )
+        if source_refs:
+            metadata["source_refs"] = source_refs
+
         result = ResearchResult(
             query=str(query),
             findings=findings,
             summary=summary_text,
             sources=sources,
             confidence=min(1.0, max(0.0, confidence)),
-            metadata=state.get("metadata", {}),
+            metadata=metadata,
         )
 
         self._log.info(

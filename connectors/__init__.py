@@ -5,6 +5,18 @@ Import ``BaseConnector``, ``ConnectorRequest``, and ``ConnectorResult`` from
 ``connectors`` or ``connectors.base``. No side effects; nothing registers at import.
 """
 
-from connectors.base import BaseConnector, ConnectorRequest, ConnectorResult
+from connectors.base import (
+    BaseConnector,
+    ConnectorRequest,
+    ConnectorResult,
+    SourceRef,
+    record_to_source_ref,
+)
 
-__all__ = ["BaseConnector", "ConnectorRequest", "ConnectorResult"]
+__all__ = [
+    "BaseConnector",
+    "ConnectorRequest",
+    "ConnectorResult",
+    "SourceRef",
+    "record_to_source_ref",
+]
