@@ -82,6 +82,26 @@ Each pack gets typed `POST /packs/{pack_id}/run` and `/run/stream` when schemas 
 
 Full catalogue and authoring guide: **[domain_packs/README.md](domain_packs/README.md)**.
 
+### Distributable packs (plugins)
+
+Third-party packs ship as regular Python packages declaring an entry point in
+the `langgraph_agent_stack.packs` group:
+
+```toml
+[project.entry-points."langgraph_agent_stack.packs"]
+sentiment = "acme_packs.sentiment:SentimentPack"
+```
+
+Discovery is **opt-in and allowlisted** (`PACK_PLUGINS_ENABLED=true` +
+`PACK_PLUGINS_ALLOWLIST=sentiment`): loading a plugin executes third-party
+code, so nothing loads by default. At load time each class is validated
+against the pack contract — `BaseDomainPack` subclass, complete metadata, and
+**strict** (`extra="forbid"`) input/output schemas — and a broken plugin is
+logged and skipped, never crashing startup. Built-in pack ids cannot be
+overridden. Registered plugins get the same typed `/packs/{id}/run` routes,
+versioning, and canary weights as built-ins. Packaging walkthrough:
+[examples/custom_pack/README.md](examples/custom_pack/README.md).
+
 ## API (summary)
 
 | Method | Path | Description |

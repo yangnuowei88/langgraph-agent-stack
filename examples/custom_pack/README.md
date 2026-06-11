@@ -95,3 +95,35 @@ examples/custom_pack/
 ```
 
 No imports from `domain_packs/summariser` — this tree is the reference starting point.
+
+## Step 7 — Distribute as a plugin (entry points)
+
+Ship your pack as its own Python package and declare an entry point in the
+`langgraph_agent_stack.packs` group:
+
+```toml
+# your-package/pyproject.toml
+[project]
+name = "acme-echo-pack"
+version = "1.0.0"
+dependencies = ["langgraph-agent-stack"]
+
+[project.entry-points."langgraph_agent_stack.packs"]
+echo = "acme_echo_pack.pack:EchoPack"
+```
+
+On the serving side, install the package (from a vetted, pinned index) and
+opt in explicitly — plugins never load by default because they execute
+third-party code:
+
+```bash
+PACK_PLUGINS_ENABLED=true
+PACK_PLUGINS_ALLOWLIST=echo
+```
+
+At startup the loader validates the contract (BaseDomainPack subclass,
+complete metadata, strict `extra="forbid"` schemas) and registers the pack:
+it gets `/packs/echo/run` and `/run/stream` like any built-in. Contract
+violations or import errors are logged and the plugin is skipped — startup
+never fails because of a bad plugin, and built-in pack ids cannot be
+overridden.

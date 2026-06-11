@@ -367,6 +367,35 @@ class Settings(BaseSettings):
         description="SQLite file path used when REVIEW_STORE_BACKEND=sqlite.",
     )
 
+    pack_plugins_enabled: bool = Field(
+        default=False,
+        validation_alias="PACK_PLUGINS_ENABLED",
+        description=(
+            "Opt-in loading of third-party packs from the "
+            "'langgraph_agent_stack.packs' entry-point group. Loading plugins "
+            "executes third-party code: keep disabled unless the allowlist "
+            "below names packages you trust."
+        ),
+    )
+    pack_plugins_allowlist: str = Field(
+        default="",
+        validation_alias="PACK_PLUGINS_ALLOWLIST",
+        description=(
+            "Comma-separated entry-point names to load when "
+            "PACK_PLUGINS_ENABLED=true. Empty means none (deny by default)."
+        ),
+    )
+
+    @property
+    def resolved_pack_plugins_allowlist(self) -> tuple[str, ...]:
+        """Allowlisted plugin entry-point names (deduplicated, blanks removed)."""
+        seen: dict[str, None] = {}
+        for name in self.pack_plugins_allowlist.split(","):
+            cleaned = name.strip()
+            if cleaned:
+                seen.setdefault(cleaned)
+        return tuple(seen)
+
     api_key: str | None = Field(
         default=None,
         validation_alias="API_KEY",
