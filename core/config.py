@@ -247,6 +247,39 @@ class Settings(BaseSettings):
         description="Max redirects for CONNECTOR_ID=http (each hop SSRF-validated).",
     )
 
+    # SharePoint (Microsoft Graph) connector — CONNECTOR_ID=sharepoint.
+    # ACLs are enforced by the service principal: grant Sites.Selected on the
+    # sites the agent may read.
+    connector_sharepoint_tenant_id: str | None = Field(
+        default=None,
+        validation_alias="CONNECTOR_SHAREPOINT_TENANT_ID",
+        description="Entra ID tenant for the Graph client-credentials flow.",
+    )
+    connector_sharepoint_client_id: str | None = Field(
+        default=None,
+        validation_alias="CONNECTOR_SHAREPOINT_CLIENT_ID",
+        description="App registration client id (application permissions).",
+    )
+    connector_sharepoint_client_secret: str | None = Field(
+        default=None,
+        validation_alias="CONNECTOR_SHAREPOINT_CLIENT_SECRET",
+        description="App registration client secret.",
+    )
+
+    # Google Drive connector — CONNECTOR_ID=gdrive.
+    # Token is minted by the environment (Workload Identity / sidecar) so the
+    # stack stays SDK-free; ACLs are enforced by the credentials' visibility.
+    connector_gdrive_access_token: str | None = Field(
+        default=None,
+        validation_alias="CONNECTOR_GDRIVE_ACCESS_TOKEN",
+        description="Short-lived Drive bearer token supplied by the environment.",
+    )
+    connector_gdrive_drive_id: str | None = Field(
+        default=None,
+        validation_alias="CONNECTOR_GDRIVE_DRIVE_ID",
+        description="Optional shared-drive id to scope the search corpus.",
+    )
+
     # --- Logging ---
     log_level: LogLevel = Field(
         default=LogLevel.INFO,
