@@ -8,6 +8,8 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-009688)](https://fastapi.tiangolo.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![CI](https://github.com/brescou/langgraph-agent-stack/actions/workflows/ci.yml/badge.svg)](https://github.com/brescou/langgraph-agent-stack/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-757%2B%20passing-brightgreen)](tests/)
+[![Coverage](https://img.shields.io/badge/coverage-87%25-brightgreen)](tests/)
 
 ## What is this?
 
@@ -17,7 +19,15 @@ A deployable starting point for ML / data engineers who want a **real** agent st
 
 **Not included:** OAuth2/OIDC, per-tenant API keys, or billing. The built-in `API_KEY` is a single shared Bearer secret for internal / single-tenant use.
 
+## Why this instead of…
+
+**…LangGraph Platform?** LangGraph Platform is a legitimate, well-supported managed option — use it if you want a hosted control plane and don't want to run infrastructure yourself. This repo is for the opposite case: you self-host on your own Kubernetes cluster, keep full control of observability (Prometheus/OTel) and per-run cost data, and ship under the MIT license with zero vendor lock-in. Neither is objectively "better" — it's a build-vs-buy trade-off, and this template is for teams who'd rather own the stack.
+
+**…a generic agent-service-toolkit template?** Beyond the usual FastAPI-around-LangGraph scaffolding, this repo ships production concerns already wired in: per-run USD budgets that return HTTP `402` on overrun, multi-version pack routing with canary traffic weights, and a supply chain that signs container images with Cosign and publishes an SBOM on every release.
+
 ## Quick start
+
+**Prerequisites:** Python 3.12+, [`uv`](https://docs.astral.sh/uv/getting-started/installation/) (package manager).
 
 ```bash
 git clone https://github.com/brescou/langgraph-agent-stack.git
@@ -26,6 +36,8 @@ uv sync --extra anthropic
 cp .env.example .env   # set ANTHROPIC_API_KEY
 uv run uvicorn api.main:app --reload
 ```
+
+> **Try it without any API key.** Set `LLM_PROVIDER=mock` in `.env` (or `LLM_PROVIDER=mock uv run uvicorn api.main:app --reload`) to get deterministic, zero-cost responses from every endpoint — useful for exploring the API, running the test suite, or CI, before wiring up a real provider. Web search is also mocked by default (`SEARCH_PROVIDER=mock`); set `SEARCH_PROVIDER=tavily` (or `serpapi`) for real results.
 
 ```bash
 # Legacy default pipeline (research_analysis pack)
@@ -41,6 +53,8 @@ curl -X POST http://localhost:8000/packs/meeting_prep/run \
 ```
 
 Interactive API docs: `http://localhost:8000/docs` (disabled when `ENVIRONMENT=production`).
+
+**Cost:** with a real provider, a `research_analysis` run (6 LLM calls) costs roughly **$0.01–0.05** on Claude Sonnet 5 pricing ($0.003 / $0.015 per 1K input/output tokens) — a rough order of magnitude from the pricing table in `core/cost.py`, not a measured benchmark. Set `PACK_DEFAULT_BUDGET_USD=0.50` to cap spend per run; requests over budget return HTTP `402`.
 
 ## Architecture
 
@@ -81,6 +95,8 @@ Client → FastAPI (auth · rate limit · validation)
 Each pack gets typed `POST /packs/{pack_id}/run` and `/run/stream` when schemas are declared. Versioning, traffic weights, and sticky sessions: `GET /packs`, `GET /packs/{id}/versions`, headers `X-Pack-Version` / `X-Pack-Version-Used`.
 
 Full catalogue and authoring guide: **[domain_packs/README.md](domain_packs/README.md)**.
+
+The HR, legal, and finance packs demonstrate the pack system on regulated-adjacent use cases, but they are **off by default** (`REGULATED_PACKS_ENABLED=false`) — calling them returns HTTP `403` until you complete the pack's `COMPLIANCE.md` checklist and explicitly opt in.
 
 ### Distributable packs (plugins)
 
@@ -150,6 +166,8 @@ helm install langgraph ./infra/helm/langgraph-agent-stack \
 
 Production: set `secrets.existingSecret` (External Secrets Operator), `config.environment=production`, `networkPolicy.enabled=true`. Autoscaling defaults to **KEDA** on `active_pipelines` (not CPU). See chart `values.yaml` / `values.prod.yaml`.
 
+> **Scaling note.** `MEMORY_BACKEND=sqlite` (default) is for development and single-replica deployments only — it's a local file, so state is not shared across pods. For production, multi-replica deployments, switch to `MEMORY_BACKEND=redis` or `MEMORY_BACKEND=postgres` so checkpointing and session history are consistent across replicas.
+
 **Terraform** — entry points under `infra/terraform/{gke,eks,aks}/` (no shared root module). Configure a remote backend before production apply. GKE module expects [External Secrets Operator](docs/security.md#3-secret-management) installed before `ClusterSecretStore` resources.
 
 **Infra CI locally:** `make infra-check` (template Checkov profile). Before production hardening: `make infra-check-prod` ([checklist](docs/security.md#before-going-to-production-checkov)).
@@ -163,7 +181,7 @@ Rate limiting (memory or Redis), request body cap, prompt-injection / SSRF input
 ```bash
 make help          # all targets
 make check         # ruff + pyright (CI lint)
-make test          # pytest (mocked; use -m integration for testcontainers)
+make test          # 757+ tests, mocked by default — no network, no API key required
 make eval          # golden-dataset pack evaluations (deterministic)
 make infra-check   # helm lint + kubeconform + checkov
 ```
