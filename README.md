@@ -8,7 +8,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-009688)](https://fastapi.tiangolo.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![CI](https://github.com/brescou/langgraph-agent-stack/actions/workflows/ci.yml/badge.svg)](https://github.com/brescou/langgraph-agent-stack/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-757%2B%20passing-brightgreen)](tests/)
+[![Tests](https://img.shields.io/badge/tests-758%2B%20passing-brightgreen)](tests/)
 [![Coverage](https://img.shields.io/badge/coverage-87%25-brightgreen)](tests/)
 
 ## What is this?
@@ -181,7 +181,7 @@ Rate limiting (memory or Redis), request body cap, prompt-injection / SSRF input
 ```bash
 make help          # all targets
 make check         # ruff + pyright (CI lint)
-make test          # 757+ tests, mocked by default — no network, no API key required
+make test          # 758+ tests, mocked by default — no network, no API key required
 make eval          # golden-dataset pack evaluations (deterministic)
 make infra-check   # helm lint + kubeconform + checkov
 ```
