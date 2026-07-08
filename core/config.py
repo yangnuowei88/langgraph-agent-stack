@@ -100,7 +100,9 @@ class Settings(BaseSettings):
         ),
     )
     google_api_key: str | None = Field(default=None)
-    google_model: str = Field(default="gemini-3.5-flash", validation_alias="GOOGLE_MODEL")
+    google_model: str = Field(
+        default="gemini-3.5-flash", validation_alias="GOOGLE_MODEL"
+    )
     google_base_url: str | None = Field(
         default=None,
         validation_alias="GOOGLE_BASE_URL",
