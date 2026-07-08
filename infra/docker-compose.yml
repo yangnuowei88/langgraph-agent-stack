@@ -62,11 +62,19 @@ services:
       - redis
     ports:
       - "6379:6379"
-    command: redis-server --save 60 1 --loglevel warning --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD env var}
+    command:
+      - sh
+      - -c
+      - |
+        if [ -z "$$REDIS_PASSWORD" ]; then
+          echo "ERROR: REDIS_PASSWORD is required when using the redis compose profile. Set it in .env or export it before starting." >&2
+          exit 1
+        fi
+        exec redis-server --save 60 1 --loglevel warning --requirepass "$$REDIS_PASSWORD"
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "sh", "-c", "REDISCLI_AUTH=$REDIS_PASSWORD redis-cli ping"]
+      test: ["CMD", "sh", "-c", "REDISCLI_AUTH=$${REDIS_PASSWORD} redis-cli ping"]
       interval: 10s
       timeout: 5s
       retries: 5
