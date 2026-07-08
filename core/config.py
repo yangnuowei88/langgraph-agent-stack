@@ -80,7 +80,7 @@ class Settings(BaseSettings):
         validation_alias="LLM_PROVIDER",
     )
     anthropic_model: str = Field(
-        default="claude-3-5-sonnet-20241022",
+        default="claude-sonnet-5",
         validation_alias="ANTHROPIC_MODEL",
     )
     anthropic_base_url: str | None = Field(
@@ -91,7 +91,7 @@ class Settings(BaseSettings):
         ),
     )
     openai_api_key: str | None = Field(default=None)
-    openai_model: str = Field(default="gpt-4o", validation_alias="OPENAI_MODEL")
+    openai_model: str = Field(default="gpt-5.5", validation_alias="OPENAI_MODEL")
     openai_base_url: str | None = Field(
         default=None,
         validation_alias="OPENAI_BASE_URL",
@@ -100,7 +100,7 @@ class Settings(BaseSettings):
         ),
     )
     google_api_key: str | None = Field(default=None)
-    google_model: str = Field(default="gemini-1.5-pro", validation_alias="GOOGLE_MODEL")
+    google_model: str = Field(default="gemini-3.5-flash", validation_alias="GOOGLE_MODEL")
     google_base_url: str | None = Field(
         default=None,
         validation_alias="GOOGLE_BASE_URL",
@@ -123,7 +123,7 @@ class Settings(BaseSettings):
     )
     aws_region: str = Field(default="us-east-1", validation_alias="AWS_REGION")
     bedrock_model: str = Field(
-        default="anthropic.claude-3-5-sonnet-20241022-v2:0",
+        default="anthropic.claude-sonnet-5",
         validation_alias="BEDROCK_MODEL",
     )
     bedrock_endpoint_url: str | None = Field(

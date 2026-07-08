@@ -30,7 +30,7 @@ class LLMConfig(BaseModel):
     )
     # Anthropic
     anthropic_api_key: str | None = None
-    anthropic_model: str = "claude-3-5-sonnet-20241022"
+    anthropic_model: str = "claude-sonnet-5"
     anthropic_base_url: str | None = Field(
         default=None,
         description=(
@@ -41,7 +41,7 @@ class LLMConfig(BaseModel):
     max_tokens: int = 4096
     # OpenAI
     openai_api_key: str | None = None
-    openai_model: str = "gpt-4o"
+    openai_model: str = "gpt-5.5"
     openai_base_url: str | None = Field(
         default=None,
         description=(
@@ -51,7 +51,7 @@ class LLMConfig(BaseModel):
     )
     # Google
     google_api_key: str | None = None
-    google_model: str = "gemini-1.5-pro"
+    google_model: str = "gemini-3.5-flash"
     google_base_url: str | None = Field(
         default=None,
         description="Optional Google Generative AI API base URL override.",
@@ -60,7 +60,7 @@ class LLMConfig(BaseModel):
     aws_access_key_id: str | None = None
     aws_secret_access_key: str | None = None
     aws_region: str = "us-east-1"
-    bedrock_model: str = "anthropic.claude-3-5-sonnet-20241022-v2:0"
+    bedrock_model: str = "anthropic.claude-sonnet-5"
     bedrock_endpoint_url: str | None = Field(
         default=None,
         description=(

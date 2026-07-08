@@ -96,6 +96,9 @@ COST_PER_1K: dict[str, ModelPricing] = {
     "claude-opus-4-1": _pricing(0.015, 0.075),
     "claude-opus-4-7": _pricing(0.015, 0.075),
     "claude-haiku-4-5": _pricing(0.001, 0.005),
+    # Anthropic — Claude 5 generation (current, July 2026)
+    "claude-sonnet-5": _pricing(0.003, 0.015),
+    "claude-opus-4-8": _pricing(0.005, 0.025),
     # OpenAI — GPT-4o family
     "gpt-4o": _pricing(0.005, 0.015),
     "gpt-4o-mini": _pricing(0.00015, 0.0006),
@@ -114,12 +117,16 @@ COST_PER_1K: dict[str, ModelPricing] = {
     "o1-preview": _pricing(0.015, 0.06),
     "o3": _pricing(0.01, 0.04),
     "o3-mini": _pricing(0.0011, 0.0044),
+    # OpenAI — GPT-5.x generation (current, July 2026)
+    "gpt-5.5": _pricing(0.005, 0.03),
     # Google Gemini
     "gemini-1.5-pro": _pricing(0.00125, 0.005),
     "gemini-1.5-flash": _pricing(0.000075, 0.0003),
     "gemini-2.0-flash": _pricing(0.0001, 0.0004),
     "gemini-2.5-pro": _pricing(0.00125, 0.01),
     "gemini-2.5-flash": _pricing(0.00015, 0.0006),
+    # Google Gemini 3.x generation (current, July 2026)
+    "gemini-3.5-flash": _pricing(0.0015, 0.009),
     # Mistral
     "mistral-large-latest": _pricing(0.002, 0.006),
     "mistral-small-latest": _pricing(0.0002, 0.0006),
@@ -135,8 +142,10 @@ COST_PER_1K: dict[str, ModelPricing] = {
 MODEL_ID_PREFIX_ALIASES: tuple[tuple[str, str], ...] = (
     ("claude-sonnet-4", "claude-sonnet-4-20250514"),
     ("claude-opus-4-1", "claude-opus-4-1"),
+    ("claude-opus-4-8", "claude-opus-4-8"),
     ("claude-opus-4", "claude-opus-4-20250514"),
     ("claude-haiku-4-5", "claude-haiku-4-5"),
+    ("claude-sonnet-5", "claude-sonnet-5"),
     ("claude-3-5-sonnet", "claude-3-5-sonnet-20241022"),
     ("claude-3-5-haiku", "claude-3-5-haiku-20241022"),
     ("claude-3-opus", "claude-3-opus-20240229"),
@@ -160,8 +169,10 @@ MODEL_ID_PREFIX_ALIASES: tuple[tuple[str, str], ...] = (
     ("anthropic.claude-3-5-haiku", "claude-3-5-haiku-20241022"),
     ("anthropic.claude-3-opus", "claude-3-opus-20240229"),
     ("anthropic.claude-sonnet-4", "claude-sonnet-4-20250514"),
+    ("anthropic.claude-opus-4-8", "claude-opus-4-8"),
     ("anthropic.claude-opus-4", "claude-opus-4-20250514"),
     ("anthropic.claude-haiku-4-5", "claude-haiku-4-5"),
+    ("anthropic.claude-sonnet-5", "claude-sonnet-5"),
     ("meta.llama3-3-70b-instruct", "llama-3.3-70b-instruct"),
     ("meta.llama3-1-405b-instruct", "llama-3.1-405b-instruct"),
     ("meta.llama3-1-70b-instruct", "llama-3.1-70b-instruct"),
