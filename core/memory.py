@@ -21,11 +21,11 @@ Backend matrix
 +-------------------+-------------------------------+---------------------------+
 | ``memory_backend``| Checkpointer                  | Run history store         |
 +===================+===============================+===========================+
-| ``sqlite``        | ``SqliteSaver``               | ``ConversationMemory``    |
+| ``sqlite``        | ``AsyncSqliteSaver``          | ``ConversationMemory``    |
 +-------------------+-------------------------------+---------------------------+
-| ``redis``         | ``RedisSaver``                | ``RedisRunHistory``       |
+| ``redis``         | ``AsyncRedisSaver``           | ``RedisRunHistory``       |
 +-------------------+-------------------------------+---------------------------+
-| ``postgres``      | ``PostgresSaver``             | ``PostgresRunHistory``    |
+| ``postgres``      | ``AsyncPostgresSaver``        | ``PostgresRunHistory``    |
 +-------------------+-------------------------------+---------------------------+
 | fallback / error  | ``MemorySaver``               | ``ConversationMemory``    |
 +-------------------+-------------------------------+---------------------------+
@@ -46,6 +46,7 @@ Usage example::
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import sqlite3
@@ -104,6 +105,41 @@ def _fallback_or_raise(message: str) -> MemorySaver:
 # ---------------------------------------------------------------------------
 
 
+async def init_checkpointer(settings: Settings) -> Any:
+    """Initialize an async LangGraph checkpointer at application startup.
+
+    Called from the FastAPI lifespan so async context managers (``aiosqlite``,
+    ``AsyncRedisSaver``, ``AsyncPostgresSaver``) are entered once and reused
+    for ``stream_events()`` / ``arun()`` on the main event loop.  Sync
+    ``run()`` calls execute in ``ThreadPoolExecutor`` workers and remain
+    compatible with the async savers.
+
+    Args:
+        settings: Application settings.
+
+    Returns:
+        A configured async ``BaseCheckpointSaver`` instance.
+    """
+    backend = settings.memory_backend
+
+    if backend == MemoryBackend.SQLITE:
+        return await _init_sqlite_checkpointer(settings.sqlite_path)
+
+    if backend == MemoryBackend.REDIS:
+        return await _init_redis_checkpointer(settings.redis_url)
+
+    if backend == MemoryBackend.POSTGRES:
+        return await _init_postgres_checkpointer(settings.postgres_url)
+
+    logger.warning(
+        "Unknown memory_backend %r — falling back to MemorySaver.",
+        backend,
+    )
+    return _fallback_or_raise(
+        f"Unknown memory_backend {backend!r} — cannot create checkpointer."
+    )
+
+
 def create_checkpointer(settings: Settings) -> Any:
     """
     Construct and return a LangGraph checkpoint saver based on ``settings``.
@@ -121,11 +157,11 @@ def create_checkpointer(settings: Settings) -> Any:
         A configured LangGraph ``BaseCheckpointSaver`` instance.  The exact
         concrete type depends on the resolved backend:
 
-        * ``SqliteSaver``          — when ``memory_backend == MemoryBackend.SQLITE``
+        * ``AsyncSqliteSaver``     — when ``memory_backend == MemoryBackend.SQLITE``
           and ``langgraph-checkpoint-sqlite`` is installed.
-        * ``RedisSaver``           — when ``memory_backend == MemoryBackend.REDIS``
+        * ``AsyncRedisSaver``      — when ``memory_backend == MemoryBackend.REDIS``
           and ``langgraph-checkpoint-redis`` is installed.
-        * ``PostgresSaver``        — when ``memory_backend == MemoryBackend.POSTGRES``
+        * ``AsyncPostgresSaver``   — when ``memory_backend == MemoryBackend.POSTGRES``
           and ``langgraph-checkpoint-postgres`` is installed.
         * ``MemorySaver``          — fallback for all other cases.
     """
@@ -149,35 +185,70 @@ def create_checkpointer(settings: Settings) -> Any:
     )
 
 
-def _create_sqlite_checkpointer(sqlite_path: str) -> Any:
-    """
-    Build a ``SqliteSaver`` checkpointer backed by the given file path.
+async def _enter_async_checkpointer_cm(cm: Any) -> Any:
+    """Enter an async checkpointer context manager and run ``setup()`` when present."""
+    checkpointer = await cm.__aenter__()
+    setup_result = checkpointer.setup()
+    if asyncio.iscoroutine(setup_result):
+        await setup_result
+    return checkpointer
 
-    The parent directory is created automatically if it does not exist.
-    Falls back to ``MemorySaver`` when the ``langgraph-checkpoint-sqlite``
-    package is not installed.
 
-    Args:
-        sqlite_path: Filesystem path to the SQLite database file.
+def _sync_enter_async_checkpointer_cm(cm: Any) -> Any:
+    """Enter an async checkpointer CM from a synchronous caller (no running loop)."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(_enter_async_checkpointer_cm(cm))
+    raise RuntimeError(
+        "create_checkpointer() cannot be called from a running event loop; "
+        "use init_checkpointer() during lifespan startup instead."
+    )
 
-    Returns:
-        A ``SqliteSaver`` instance, or a ``MemorySaver`` on import failure.
-    """
+
+async def _init_sqlite_checkpointer(sqlite_path: str) -> Any:
+    """Build an ``AsyncSqliteSaver`` checkpointer (lifespan / async path)."""
     db_path = Path(sqlite_path)
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        from langgraph.checkpoint.sqlite import SqliteSaver  # type: ignore[import]
+        from langgraph.checkpoint.sqlite.aio import (  # type: ignore[import]
+            AsyncSqliteSaver,
+        )
 
-        conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        # WAL mode — cohérent avec ConversationMemory, requis pour accès concurrent
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute("PRAGMA busy_timeout=5000")
-        conn.execute("PRAGMA cache_size=1000")
-        checkpointer = SqliteSaver(conn)
+        cm = AsyncSqliteSaver.from_conn_string(str(db_path))
+        checkpointer = await _enter_async_checkpointer_cm(cm)
+        _set_async_checkpointer_cm(cm)
         logger.info(
-            "Checkpointer: SqliteSaver initialised",
+            "Checkpointer: AsyncSqliteSaver initialised",
+            extra={"path": str(db_path)},
+        )
+        return checkpointer
+
+    except ImportError:
+        logger.warning(
+            "langgraph-checkpoint-sqlite not installed — falling back to "
+            "MemorySaver.  Install with: pip install langgraph-checkpoint-sqlite",
+            extra={"sqlite_path": sqlite_path},
+        )
+        return _fallback_or_raise("langgraph-checkpoint-sqlite not installed.")
+
+
+def _create_sqlite_checkpointer(sqlite_path: str) -> Any:
+    """Build an ``AsyncSqliteSaver`` checkpointer (sync factory / tests)."""
+    db_path = Path(sqlite_path)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        from langgraph.checkpoint.sqlite.aio import (  # type: ignore[import]
+            AsyncSqliteSaver,
+        )
+
+        cm = AsyncSqliteSaver.from_conn_string(str(db_path))
+        checkpointer = _sync_enter_async_checkpointer_cm(cm)
+        _set_async_checkpointer_cm(cm)
+        logger.info(
+            "Checkpointer: AsyncSqliteSaver initialised",
             extra={"path": str(db_path)},
         )
         return checkpointer
@@ -193,51 +264,67 @@ def _create_sqlite_checkpointer(sqlite_path: str) -> Any:
 
 # Module-level references for cleanup
 _active_checkpointer_cm: Any = None
+_active_async_checkpointer_cm: Any = None
 _checkpointer_lock: threading.Lock = threading.Lock()
 
 
 def _set_checkpointer_cm(cm: Any) -> None:
-    """Thread-safe store of the context manager for proper cleanup at shutdown."""
+    """Thread-safe store of a sync context manager for cleanup at shutdown."""
     global _active_checkpointer_cm
     with _checkpointer_lock:
         _active_checkpointer_cm = cm
 
 
+def _set_async_checkpointer_cm(cm: Any) -> None:
+    """Thread-safe store of an async context manager for cleanup at shutdown."""
+    global _active_async_checkpointer_cm
+    with _checkpointer_lock:
+        _active_async_checkpointer_cm = cm
+
+
 def cleanup_checkpointer() -> None:
-    """Exit the checkpointer context manager if one is active. Call at shutdown."""
+    """Exit any sync checkpointer context manager. Call at shutdown."""
     global _active_checkpointer_cm
     with _checkpointer_lock:
         if _active_checkpointer_cm is not None:
             try:
                 _active_checkpointer_cm.__exit__(None, None, None)
-                logger.debug("Checkpointer context manager exited cleanly.")
+                logger.debug("Sync checkpointer context manager exited cleanly.")
             except Exception as exc:
                 logger.warning("Checkpointer cleanup failed", extra={"error": str(exc)})
             finally:
                 _active_checkpointer_cm = None
 
 
-def _create_redis_checkpointer(redis_url: str) -> Any:
-    """
-    Build a ``RedisSaver`` checkpointer connected to ``redis_url``.
+async def cleanup_checkpointer_async() -> None:
+    """Exit async and sync checkpointer context managers. Call at lifespan shutdown."""
+    global _active_async_checkpointer_cm
+    with _checkpointer_lock:
+        cm = _active_async_checkpointer_cm
+        _active_async_checkpointer_cm = None
+    if cm is not None:
+        try:
+            await cm.__aexit__(None, None, None)
+            logger.debug("Async checkpointer context manager exited cleanly.")
+        except Exception as exc:
+            logger.warning(
+                "Async checkpointer cleanup failed", extra={"error": str(exc)}
+            )
+    cleanup_checkpointer()
 
-    Falls back to ``MemorySaver`` when the ``langgraph-checkpoint-redis``
-    package is not installed.
 
-    Args:
-        redis_url: Redis connection URL (e.g. ``redis://localhost:6379/0``).
-
-    Returns:
-        A ``RedisSaver`` instance, or a ``MemorySaver`` on import failure.
-    """
+async def _init_redis_checkpointer(redis_url: str) -> Any:
+    """Build an ``AsyncRedisSaver`` checkpointer (lifespan / async path)."""
     try:
-        from langgraph.checkpoint.redis import RedisSaver  # type: ignore[import]
+        from langgraph.checkpoint.redis.aio import (  # type: ignore[import]
+            AsyncRedisSaver,
+        )
 
-        conn = RedisSaver.from_conn_string(redis_url)
-        checkpointer = conn.__enter__()
-        _set_checkpointer_cm(conn)
+        cm = AsyncRedisSaver.from_conn_string(redis_url)
+        checkpointer = await _enter_async_checkpointer_cm(cm)
+        _set_async_checkpointer_cm(cm)
         logger.info(
-            "Checkpointer: RedisSaver initialised",
+            "Checkpointer: AsyncRedisSaver initialised",
             extra={"url": _redact_url(redis_url)},
         )
         return checkpointer
@@ -251,28 +338,33 @@ def _create_redis_checkpointer(redis_url: str) -> Any:
         return _fallback_or_raise("langgraph-checkpoint-redis not installed.")
 
 
-def _create_postgres_checkpointer(postgres_url: str | None) -> Any:
-    """
-    Build a ``PostgresSaver`` checkpointer connected to ``postgres_url``.
+def _create_redis_checkpointer(redis_url: str) -> Any:
+    """Build an ``AsyncRedisSaver`` checkpointer (sync factory / tests)."""
+    try:
+        from langgraph.checkpoint.redis.aio import (  # type: ignore[import]
+            AsyncRedisSaver,
+        )
 
-    Uses the **synchronous** ``PostgresSaver`` so it is compatible with
-    ``graph.invoke()`` (the main execution path).  ``setup()`` is called
-    to ensure the checkpoint tables exist.
+        cm = AsyncRedisSaver.from_conn_string(redis_url)
+        checkpointer = _sync_enter_async_checkpointer_cm(cm)
+        _set_async_checkpointer_cm(cm)
+        logger.info(
+            "Checkpointer: AsyncRedisSaver initialised",
+            extra={"url": _redact_url(redis_url)},
+        )
+        return checkpointer
 
-    The ``POSTGRES_URL`` environment variable must be set when
-    ``MEMORY_BACKEND=postgres``.  Falls back to ``MemorySaver`` when the
-    ``langgraph-checkpoint-postgres`` package is not installed.
+    except ImportError:
+        logger.warning(
+            "langgraph-checkpoint-redis not installed — falling back to "
+            "MemorySaver.  Install with: pip install langgraph-checkpoint-redis",
+            extra={"redis_url": _redact_url(redis_url)},
+        )
+        return _fallback_or_raise("langgraph-checkpoint-redis not installed.")
 
-    Args:
-        postgres_url: PostgreSQL DSN string, e.g.
-            ``postgresql+psycopg://user:pass@localhost:5432/dbname``.
-            When ``None`` a warning is emitted and the in-process
-            ``MemorySaver`` is returned.
 
-    Returns:
-        A ``PostgresSaver`` instance, or a ``MemorySaver`` on import
-        failure or missing URL.
-    """
+async def _init_postgres_checkpointer(postgres_url: str | None) -> Any:
+    """Build an ``AsyncPostgresSaver`` checkpointer (lifespan / async path)."""
     if not postgres_url:
         logger.warning(
             "MEMORY_BACKEND=postgres but POSTGRES_URL is not set — "
@@ -283,16 +375,49 @@ def _create_postgres_checkpointer(postgres_url: str | None) -> Any:
         )
 
     try:
-        from langgraph.checkpoint.postgres import (
-            PostgresSaver,  # type: ignore[import]
+        from langgraph.checkpoint.postgres.aio import (  # type: ignore[import]
+            AsyncPostgresSaver,
         )
 
-        conn = PostgresSaver.from_conn_string(postgres_url)
-        checkpointer = conn.__enter__()
-        _set_checkpointer_cm(conn)
-        checkpointer.setup()
+        cm = AsyncPostgresSaver.from_conn_string(postgres_url)
+        checkpointer = await _enter_async_checkpointer_cm(cm)
+        _set_async_checkpointer_cm(cm)
         logger.info(
-            "Checkpointer: PostgresSaver initialised (tables created)",
+            "Checkpointer: AsyncPostgresSaver initialised (tables created)",
+            extra={"url": _redact_url(postgres_url)},
+        )
+        return checkpointer
+
+    except ImportError:
+        logger.warning(
+            "langgraph-checkpoint-postgres not installed — falling back to "
+            "MemorySaver.  Install with: uv sync --extra postgres",
+            extra={"postgres_url": _redact_url(postgres_url)},
+        )
+        return _fallback_or_raise("langgraph-checkpoint-postgres not installed.")
+
+
+def _create_postgres_checkpointer(postgres_url: str | None) -> Any:
+    """Build an ``AsyncPostgresSaver`` checkpointer (sync factory / tests)."""
+    if not postgres_url:
+        logger.warning(
+            "MEMORY_BACKEND=postgres but POSTGRES_URL is not set — "
+            "falling back to MemorySaver."
+        )
+        return _fallback_or_raise(
+            "MEMORY_BACKEND=postgres but POSTGRES_URL is not set."
+        )
+
+    try:
+        from langgraph.checkpoint.postgres.aio import (  # type: ignore[import]
+            AsyncPostgresSaver,
+        )
+
+        cm = AsyncPostgresSaver.from_conn_string(postgres_url)
+        checkpointer = _sync_enter_async_checkpointer_cm(cm)
+        _set_async_checkpointer_cm(cm)
+        logger.info(
+            "Checkpointer: AsyncPostgresSaver initialised (tables created)",
             extra={"url": _redact_url(postgres_url)},
         )
         return checkpointer

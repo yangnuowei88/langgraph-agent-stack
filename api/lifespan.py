@@ -13,7 +13,7 @@ from fastapi import FastAPI
 
 import api.state as state
 from core.config import Settings, get_settings
-from core.memory import cleanup_checkpointer, create_run_history
+from core.memory import cleanup_checkpointer_async, create_run_history
 from core.observability import init_tracing, server_shutting_down
 from core.review_store import create_review_store
 from core.security import create_rate_limiter, create_session_registry
@@ -28,18 +28,17 @@ logger = logging.getLogger(__name__)
 register_builtin_packs()
 
 
-def _init_llm_and_checkpointer(settings: Settings) -> None:
-    """Attempt to create the shared LLM and checkpointer.
+async def _init_llm_and_checkpointer(settings: Settings) -> None:
+    """Create the shared LLM and async checkpointer at startup.
 
     On failure the globals are set to None and a warning is logged.
-    Called at startup and can be re-invoked to retry after a transient error.
     """
     from core.llm import get_llm
-    from core.memory import create_checkpointer
+    from core.memory import init_checkpointer
 
     try:
         state.shared_llm = get_llm(settings.llm_config)
-        state.shared_checkpointer = create_checkpointer(settings)
+        state.shared_checkpointer = await init_checkpointer(settings)
         logger.info("LLM provider '%s' configured successfully", settings.llm_provider)
     except (ImportError, ValueError) as exc:
         logger.warning("LLM configuration warning: %s", exc)
@@ -98,7 +97,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     )
 
     init_tracing()
-    _init_llm_and_checkpointer(settings)
+    await _init_llm_and_checkpointer(settings)
 
     try:
         state.active_pack_cls = PackRegistry.get(settings.default_pack_id)
@@ -178,7 +177,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         server_shutting_down.set(1)
     if state.executor is not None:
         state.executor.shutdown(wait=True, cancel_futures=False)
-    cleanup_checkpointer()
+    await cleanup_checkpointer_async()
     if state.shared_memory is not None:
         state.shared_memory.close()
     if state.review_store is not None:

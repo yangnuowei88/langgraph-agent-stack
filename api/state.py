@@ -99,21 +99,16 @@ def get_shared_llm() -> BaseChatModel | None:
     if shared_llm is None:
         with _init_lock:
             if shared_llm is None:
-                from api.lifespan import _init_llm_and_checkpointer
                 from core.config import get_settings
+                from core.llm import get_llm
 
-                _init_llm_and_checkpointer(get_settings())
+                try:
+                    shared_llm = get_llm(get_settings().llm_config)
+                except (ImportError, ValueError):
+                    pass
     return shared_llm
 
 
 def get_shared_checkpointer() -> Any | None:
-    """Return the shared checkpointer, retrying init if the first attempt failed."""
-    global shared_checkpointer
-    if shared_checkpointer is None:
-        with _init_lock:
-            if shared_checkpointer is None:
-                from api.lifespan import _init_llm_and_checkpointer
-                from core.config import get_settings
-
-                _init_llm_and_checkpointer(get_settings())
+    """Return the shared checkpointer initialized during lifespan startup."""
     return shared_checkpointer
