@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Question / usage help
+    url: https://github.com/Brescou/langgraph-agent-stack/discussions/categories/q-a
+    about: Ask the community (Q&A discussions) instead of opening an issue — check the pinned FAQ first.
+  - name: Security vulnerability
+    url: https://github.com/Brescou/langgraph-agent-stack/security/advisories/new
+    about: Report a vulnerability privately. See SECURITY.md for the full policy.

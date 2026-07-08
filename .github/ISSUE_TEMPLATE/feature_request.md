@@ -2,10 +2,14 @@
 name: Feature request
 about: Suggest an idea for this project
 title: ''
-labels: ''
+labels: enhancement
 assignees: ''
 
 ---
+
+> For early-stage or open-ended ideas you'd like to discuss before committing
+> to a concrete proposal, the [Ideas discussions](https://github.com/Brescou/langgraph-agent-stack/discussions/categories/ideas)
+> category may be a better fit than an issue.
 
 **Is your feature request related to a problem? Please describe.**
 A clear and concise description of what the problem is. Ex. I'm always frustrated when [...]
