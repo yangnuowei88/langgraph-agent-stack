@@ -2,14 +2,14 @@
 
 > Production-grade **template** for multi-agent LangGraph systems — hardened FastAPI API, domain packs, Helm, Terraform stubs, CI, and observability. Multi-tenant identity is **your** layer ([Security guide](docs/security.md)).
 
-[![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/release/python-3120/)
+[![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)](https://www.python.org/downloads/release/python-3130/)
 [![uv](https://img.shields.io/badge/package%20manager-uv-blueviolet)](https://github.com/astral-sh/uv)
 [![LangGraph](https://img.shields.io/badge/LangGraph-0.2%2B-orange)](https://langchain-ai.github.io/langgraph/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115%2B-009688)](https://fastapi.tiangolo.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![CI](https://github.com/brescou/langgraph-agent-stack/actions/workflows/ci.yml/badge.svg)](https://github.com/brescou/langgraph-agent-stack/actions/workflows/ci.yml)
 [![Tests](https://img.shields.io/badge/tests-758%2B%20passing-brightgreen)](tests/)
-[![Coverage](https://img.shields.io/badge/coverage-87%25-brightgreen)](tests/)
+[![Coverage](https://img.shields.io/badge/coverage-~86%25-brightgreen)](tests/)
 
 ## What is this?
 
