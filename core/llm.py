@@ -277,21 +277,25 @@ def get_llm(config: LLMConfig) -> BaseChatModel:
                 FakeListChatModel,
             )
 
+            # Ordered to match the exact sequence of LLM calls made by the
+            # research_analysis pipeline (ResearchAgent then AnalystAgent),
+            # 3 calls each — see agents/researcher.py and agents/analyst.py.
+            # FakeListChatModel returns these in order (cycling once
+            # exhausted), so misordering here silently produces incoherent
+            # mock output rather than an error.
             responses = [
-                # query expansion
+                # ResearchAgent._node_research — query expansion
                 json.dumps(["sub-query 1", "sub-query 2", "sub-query 3"]),
-                # search results (returned by tool, but LLM may be called)
-                json.dumps({"summary": "Mock research finding.", "confidence": 0.8}),
-                # validation
+                # ResearchAgent._node_validate — sufficiency check
                 json.dumps({"sufficient": True, "reason": "Mock validation passed."}),
-                # summarise
+                # ResearchAgent._node_summarize — final research summary
                 json.dumps(
                     {
                         "summary": "Mock research summary based on findings.",
                         "confidence": 0.85,
                     }
                 ),
-                # analysis — insights
+                # AnalystAgent._node_analyze — key insights
                 json.dumps(
                     {
                         "insights": [
@@ -301,7 +305,7 @@ def get_llm(config: LLMConfig) -> BaseChatModel:
                         "confidence": 0.82,
                     }
                 ),
-                # analysis — patterns
+                # AnalystAgent._node_synthesize — patterns and implications
                 json.dumps(
                     {
                         "patterns": ["Mock pattern: Consistent growth."],
@@ -310,7 +314,7 @@ def get_llm(config: LLMConfig) -> BaseChatModel:
                         ],
                     }
                 ),
-                # analysis — report
+                # AnalystAgent._node_report — executive summary (plain text)
                 "Mock executive summary: The analysis reveals significant trends across the research domain.",
             ]
             return FakeListChatModel(responses=responses)

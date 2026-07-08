@@ -226,10 +226,19 @@ class BaseAgent(abc.ABC):
         # Pre-bound LLM with tool schemas attached.  Not used by the
         # built-in agents (they call _invoke_llm_with_retry directly),
         # but available for subclasses that need tool-calling via
-        # LangChain's native bind_tools() API.
-        self.llm_with_tools: Any = (
-            self.llm.bind_tools(self.tools) if self.tools else self.llm
-        )
+        # LangChain's native bind_tools() API. Some chat models (e.g.
+        # FakeListChatModel, used by ``LLM_PROVIDER=mock``) do not implement
+        # bind_tools() and raise NotImplementedError; fall back to the plain
+        # LLM in that case instead of failing agent construction.
+        self.llm_with_tools: Any = self.llm
+        if self.tools:
+            try:
+                self.llm_with_tools = self.llm.bind_tools(self.tools)
+            except NotImplementedError:
+                self._log.debug(
+                    "LLM does not support bind_tools(); using unbound LLM",
+                    extra={"agent": self.name},
+                )
 
         self.checkpointer = (
             checkpointer if checkpointer is not None else create_checkpointer(_settings)
