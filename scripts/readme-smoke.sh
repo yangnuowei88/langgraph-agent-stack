@@ -33,11 +33,18 @@ curl -sf -X POST "http://127.0.0.1:8765/packs/meeting_prep/run" \
   -d '{"company": "Acme", "person": "Jane", "meeting_goal": "discovery"}' \
   | grep -q talking_points
 
+# curl exits 23 when head closes the pipe early; disable pipefail for this capture.
+set +o pipefail
 SSE_OUTPUT="$(curl -sfN -X POST "http://127.0.0.1:8765/run/stream" \
   -H "Content-Type: application/json" \
   -d '{"query": "What are the latest advances in quantum computing?"}' \
-  --max-time 60 | head -5)"
-echo "$SSE_OUTPUT" | grep -q '^data: '
+  --max-time 60 2>/dev/null | head -5 || true)"
+set -o pipefail
+if ! echo "$SSE_OUTPUT" | grep -q '^data: '; then
+  echo "ERROR: expected at least one SSE data: event from /run/stream" >&2
+  echo "$SSE_OUTPUT" >&2
+  exit 1
+fi
 
 docker compose -f infra/docker-compose.yml config >/dev/null
 
