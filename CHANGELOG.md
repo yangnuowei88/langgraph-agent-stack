@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **SSE streaming broken on default sqlite config (B1)** — `stream_events()` failed with `NotImplementedError` because the lifespan used sync `SqliteSaver`. Async checkpointers (`AsyncSqliteSaver`, `AsyncRedisSaver`, `AsyncPostgresSaver`) now back streaming/async paths; sync savers remain for `run()`. Added `tests/test_sse_integration.py` exercising real checkpointers over `/run/stream` and pack stream routes.
 - **Four structured packs returned HTTP 500 in mock mode (B2)** — `meeting_prep`, `executive_brief`, `rfp_assistant`, and `support_triage` received generic mock JSON that failed Pydantic validation. New `core/mock_llm.py` provides schema-aware mock responses; added parametrized `tests/test_mock_packs_api.py` covering all 13 built-in packs (200 or 403 for regulated).
 - **`docker compose up` failed on REDIS_PASSWORD interpolation (B3)** — `${REDIS_PASSWORD:?}` was evaluated even without the redis profile. Compose now fails explicitly only when the redis profile is active without a password; `.env.example` documents `REDIS_PASSWORD`.
+- **CI `readme-smoke` job** — capture SSE via a temp file instead of `curl | head` so SIGPIPE does not fail the job under `pipefail`; ruff lint/format fixes on `core/llm.py`, `core/mock_llm.py`, and `tests/test_mock_packs_api.py`.
 
 ### Changed
 - **`APP_VERSION` derived from package metadata** (M1) — `api/state.py` reads `importlib.metadata.version("langgraph-agent-stack")`; `pyproject.toml` bumped to `0.6.1`.
