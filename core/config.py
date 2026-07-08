@@ -68,11 +68,6 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
         populate_by_name=True,
-        # .env.example documents several optional fields as "empty = disabled"
-        # (e.g. PACK_DEFAULT_BUDGET_USD, API_KEY). Without this, `cp
-        # .env.example .env` breaks non-str optional fields: pydantic-settings
-        # otherwise tries to parse "" as e.g. a float and raises.
-        env_parse_none_str="",
     )
 
     # --- LLM ---
@@ -185,6 +180,19 @@ class Settings(BaseSettings):
             "Set to None (the default) to disable budget enforcement globally."
         ),
     )
+
+    @field_validator("pack_default_budget_usd", mode="before")
+    @classmethod
+    def _blank_budget_is_none(cls, value: object) -> object:
+        """Treat an empty string as "unset" so `cp .env.example .env` works.
+
+        .env.example ships ``PACK_DEFAULT_BUDGET_USD=`` uncommented and
+        documents empty as "no limit"; pydantic would otherwise raise a
+        float_parsing error on an empty string.
+        """
+        if isinstance(value, str) and value.strip() == "":
+            return None
+        return value
 
     llm_cost_table_path: Path | None = Field(
         default=None,
