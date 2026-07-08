@@ -7,6 +7,7 @@ go through the accessor helpers at the bottom of this module.
 
 from __future__ import annotations
 
+import importlib.metadata
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -19,7 +20,10 @@ from core.security import (
     SessionRegistryBackend,
 )
 
-APP_VERSION = "0.5.0"
+try:
+    APP_VERSION = importlib.metadata.version("langgraph-agent-stack")
+except importlib.metadata.PackageNotFoundError:
+    APP_VERSION = "0.0.0"
 
 # ---------------------------------------------------------------------------
 # Shared resources — set during lifespan startup
