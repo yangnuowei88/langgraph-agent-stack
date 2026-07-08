@@ -126,6 +126,8 @@ class TestGetLlmGoogle:
 
 
 class TestGetLlmBedrock:
+    pytest.importorskip("botocore")
+
     def test_returns_chat_bedrock(self) -> None:
         mock_model = MagicMock()
         mock_module = MagicMock()
@@ -380,6 +382,7 @@ class TestGetLlmSdkRetriesDisabled:
         assert mock_module.ChatGoogleGenerativeAI.call_args.kwargs["max_retries"] == 0
 
     def test_bedrock_boto_retries_single_attempt(self) -> None:
+        pytest.importorskip("botocore")
         mock_module = MagicMock()
         mock_module.ChatBedrock.return_value = MagicMock()
         with patch.dict("sys.modules", {"langchain_aws": mock_module}):
@@ -443,6 +446,7 @@ class TestGetLlmBaseUrlPropagation:
         )
 
     def test_bedrock_endpoint_url_forwarded(self) -> None:
+        pytest.importorskip("botocore")
         mock_module = MagicMock()
         mock_module.ChatBedrock.return_value = MagicMock()
         with patch.dict("sys.modules", {"langchain_aws": mock_module}):
