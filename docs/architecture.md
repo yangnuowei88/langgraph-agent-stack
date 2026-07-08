@@ -6,11 +6,7 @@ The platform kernel is a thin abstraction layer that sits above the existing Lan
 
 Before the platform kernel, the Research + Analysis pipeline was implemented directly in `core/graph.py` as `MultiAgentGraph`. Adding a second pipeline would have required duplicating that pattern with no standard contract between implementations. The platform kernel defines that contract once so that future domain packs can be built, registered, and swapped without touching the API layer.
 
-## Sprint 1 target vs what shipped
-
-**Original Sprint 1 goal** was: `BaseDomainPack`, static explicit registration in `pack_kernel/__init__.py`, `PackRegistry` with `register` / `get` / `list_packs`, `ResearchAnalysisPack` owning the graph, `core/graph.py` as alias, `DEFAULT_PACK_ID`, and contract tests.
-
-**Additionally implemented in code** (same release line, not a separate doc sprint): **multiple versions per `pack_id`** with **traffic-split weights**, **`get_schemas`** / **`list_packs_with_metadata`** for discovery, **class-level `version`** and **Pydantic `input_schema` / `output_schema`** on packs, **`budget_usd`** on `BaseDomainPack`, and **HTTP routes** for listing packs, versions, and updating weights (`api/endpoints/packs.py`, `api/router_factory.py`). The registry remains **Approach B** (explicit registration only; no filesystem or entry-point discovery).
+Every pack implements `BaseDomainPack`, is registered explicitly in `pack_kernel/builtin_packs.py` (**Approach B** — no filesystem or entry-point auto-discovery), and is reachable through both the legacy `MultiAgentGraph` alias in `core/graph.py` and the pack-centric HTTP routes in `api/endpoints/packs.py` / `api/router_factory.py`. `PackRegistry` supports **multiple versions per `pack_id`** with **traffic-split weights**, and `BaseDomainPack` exposes **`get_schemas`** / **`list_packs_with_metadata`** for discovery, class-level `version`, Pydantic `input_schema` / `output_schema`, and an optional per-run **`budget_usd`** ceiling.
 
 ## Directory Structure
 
