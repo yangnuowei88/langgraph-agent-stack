@@ -1,4 +1,4 @@
-replicaCount: 1  # SQLite ne supporte qu'un seul écrivain. Utilisez redis ou postgres pour scaler.
+replicaCount: 1  # SQLite supports only a single writer. Use redis or postgres to scale out.
 
 image:
   repository: langgraph-agent-stack
@@ -59,15 +59,16 @@ config:
   memoryBackend: sqlite
   sqlitePath: /app/data/memory.db
   maxTokens: "4096"
-  rateLimitBackend: "memory"  # "redis" requis pour multi-replica (partage l'état entre pods)
-  # Registre des runs en vol (dédup 409 par session_id). "redis" requis pour
-  # multi-replica, sinon le verrou ne tient que dans un seul pod.
+  rateLimitBackend: "memory"  # "redis" required for multi-replica (shares state across pods)
+  # In-flight run registry (409 dedup per session_id). "redis" is required
+  # for multi-replica deployments, otherwise the lock only holds within a
+  # single pod.
   sessionRegistryBackend: "memory"
-  # Derrière un Ingress/LB : activer la confiance proxy pour que le rate limit
-  # utilise l'IP réelle du client (X-Forwarded-For), pas l'IP du load balancer.
+  # Behind an Ingress/LB: enable proxy trust so the rate limiter uses the
+  # real client IP (X-Forwarded-For) instead of the load balancer's IP.
   trustProxyHeaders: false
-  # CIDRs des proxies de confiance (Ingress controller, ALB, GCP LB…).
-  # Exemple RFC1918 — ajuster au CIDR du plan de pods/services de votre cluster.
+  # CIDRs of trusted proxies (Ingress controller, ALB, GCP LB, etc.).
+  # RFC1918 example — adjust to your cluster's pod/service network CIDR.
   forwardedAllowIps: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
 
 # PersistentVolume for /app/data (default sqlitePath).  With memoryBackend=sqlite,
@@ -84,11 +85,11 @@ persistence:
 
 llm:
   provider: anthropic
-  anthropicModel: claude-3-5-sonnet-20241022
-  openaiModel: gpt-4o
-  googleModel: gemini-1.5-pro
+  anthropicModel: claude-sonnet-5
+  openaiModel: gpt-5.5
+  googleModel: gemini-3.5-flash
   awsRegion: us-east-1
-  bedrockModel: anthropic.claude-3-5-sonnet-20241022-v2:0
+  bedrockModel: anthropic.claude-sonnet-5
   ollamaBaseUrl: http://localhost:11434
   ollamaModel: llama3.2
 

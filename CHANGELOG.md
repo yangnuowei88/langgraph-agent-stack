@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documentation updated for the new layout (`README.md`, `domain_packs/README.md`, `docs/architecture.md`, `CONTRIBUTING.md`, `connectors/README.md`).
 
 ### Added
-- **Third and fourth domain packs** — `summariser` (`SummariserPack`, single-agent bullet summary) and `analysis_only` (`AnalysisOnlyPack`, AnalystAgent on pre-supplied research). Registered in `platform/__init__.py` with control-plane policies and typed API routes (`POST /packs/summariser/run`, `POST /packs/analysis_only/run`).
+- **Third and fourth domain packs** — `summariser` (`SummariserPack`, single-agent bullet summary) and `analysis_only` (`AnalysisOnlyPack`, AnalystAgent on pre-supplied research). Registered in `pack_kernel/builtin_packs.py` with control-plane policies and typed API routes (`POST /packs/summariser/run`, `POST /packs/analysis_only/run`).
 - **`domain_packs/README.md`** — catalogue of built-in packs and authoring guide.
 - API helpers `_pack_primary_text`, `_invoke_pack_run`, `_iter_pack_stream_events`, `_serialize_pack_result` so typed bodies with `text` (not only `query`) work on pack routes.
 - **Nine vertical domain packs** — `meeting_prep`, `rfp_assistant`, `support_triage`, `executive_brief`, `contract_reviewer`, `financial_memo`, plus HR packs under `domain_packs/hr/`: `talent_screening`, `job_description_writer`, `hr_policy_qa`. Shared base: `domain_packs/common/structured_llm.py` (`StructuredLLMPack`).
