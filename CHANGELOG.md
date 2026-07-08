@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
+## [0.6.0] - 2026-07-07
+
+### Fixed
+- **`LLM_PROVIDER=mock` returned HTTP 500 on every request** — `BaseAgent.__init__` unconditionally called `llm.bind_tools(self.tools)`, which `FakeListChatModel` (the mock provider's chat model) does not implement. Now falls back to the unbound LLM when `bind_tools()` raises `NotImplementedError`. Also fixed the mock LLM's canned response ordering, which did not match the real 6-call sequence of the `research_analysis` pipeline and produced incoherent output (empty insights, raw JSON as summary) even once the 500 was gone. Added a regression test that exercises the real `/run` endpoint end-to-end with `LLM_PROVIDER=mock` (no pack/agent mocking).
+- **`cp .env.example .env` crashed on startup** — `.env.example` ships `PACK_DEFAULT_BUDGET_USD=` uncommented with an empty value ("empty = no limit"), but `Settings()` raised a `float_parsing` error on the empty string. Added a field validator that treats a blank string as unset for this field.
+
+### Changed — Sprint highlights (models, security, README, release)
+- **Default LLM models updated** to current (July 2026) releases: Anthropic `claude-sonnet-5`, OpenAI `gpt-5.5`, Google `gemini-3.5-flash`, Bedrock `anthropic.claude-sonnet-5` — across `core/config.py`, `.env.example`, and the `core/cost.py` pricing table.
+- **Security Scanning workflow green on `main`** — added `.gitleaks.toml` allowlisting confirmed test-fixture false positives; upgraded `starlette` and `langsmith` to patch known CVEs.
+- **Docs/code cleanup** — removed AI planning scaffolding (`docs/superpowers/`) from the repo; fixed stale `RAG`/`platform/`-package references and translated remaining French comments in the Helm `values.yaml` to English.
+- **README rewritten for public launch**: a non-defensive "Why this instead of…" section positioning this template against LangGraph Platform (self-hosted, MIT, own observability/cost data — both are legitimate choices) and generic agent-service-toolkit templates (per-run budgets with HTTP 402, pack versioning with canary weights, Cosign + SBOM supply chain); a bulletproof quickstart with a `LLM_PROVIDER=mock` "try without an API key" callout, a `uv` install link, a mock-search note, and a cost estimate derived from the `core/cost.py` pricing table; credibility signals (758+ tests / ~87% coverage badges, a SQLite-dev-vs-Redis/Postgres-prod scaling callout, and a note that the regulated HR/legal/finance packs are gated behind `REGULATED_PACKS_ENABLED=false`, returning HTTP 403 until opted in).
+- **Repo hygiene** — added `.github/PULL_REQUEST_TEMPLATE.md` (description / tests / lint / docs checklist) and a root `SECURITY.md` pointing to `docs/security.md`'s full vulnerability reporting procedure.
+
+### Changed — Platform kernel and pack catalogue
 - **API package split** — monolithic `api/main.py` refactored into `api/app.py`, `lifespan.py`, `middleware.py`, `dependencies.py`, `router_factory.py`, and `api/endpoints/*`.
 - **Domain packs namespaced by business domain** — `domain_packs/research/`, `productivity/`, `hr/`, `finance/`, `legal/`, `common/` (HR packs moved from `domain_packs/rh/` to `domain_packs/hr/`).
 - **Built-in pack registration** — consolidated in `pack_kernel/builtin_packs.py` (called from `api/lifespan.py`).
