@@ -22,7 +22,9 @@ from fastapi.testclient import TestClient
 
 
 @pytest.fixture()
-def mock_provider_client(monkeypatch: pytest.MonkeyPatch) -> Generator[TestClient, None, None]:
+def mock_provider_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Generator[TestClient, None, None]:
     """TestClient wired to the real app with LLM_PROVIDER=mock, nothing patched."""
     from core.config import get_settings
 
