@@ -27,6 +27,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, StateGraph
 
 from agents.base_agent import (
+    AgentBudgetExceededError,
     AgentExecutionError,
     AgentState,
     AgentValidationError,
@@ -143,17 +144,17 @@ class AnalystAgent(BaseAgent):
             '{"insights": ["...", ...], "confidence": 0.0-1.0}'
         )
 
+        response = self._invoke_llm_with_retry(
+            [
+                SystemMessage(content="You are a rigorous analytical thinker."),
+                HumanMessage(content=analysis_prompt),
+            ]
+        )
         try:
-            response = self._invoke_llm_with_retry(
-                [
-                    SystemMessage(content="You are a rigorous analytical thinker."),
-                    HumanMessage(content=analysis_prompt),
-                ]
-            )
             parsed = json.loads(extract_text_content(response.content))
             insights: list[str] = parsed.get("insights", [])
             confidence: float = float(parsed.get("confidence", 0.7))
-        except Exception:
+        except (json.JSONDecodeError, AttributeError, TypeError, ValueError):
             logger.warning("Analyze node parsing failed", exc_info=True)
             insights = ["Analysis completed — structured extraction failed."]
             confidence = 0.5
@@ -197,17 +198,17 @@ class AnalystAgent(BaseAgent):
             '{"patterns": ["...", ...], "implications": ["...", ...]}'
         )
 
+        response = self._invoke_llm_with_retry(
+            [
+                SystemMessage(content="You are a strategic pattern synthesiser."),
+                HumanMessage(content=synthesis_prompt),
+            ]
+        )
         try:
-            response = self._invoke_llm_with_retry(
-                [
-                    SystemMessage(content="You are a strategic pattern synthesiser."),
-                    HumanMessage(content=synthesis_prompt),
-                ]
-            )
             parsed = json.loads(extract_text_content(response.content))
             patterns: list[str] = parsed.get("patterns", [])
             implications: list[str] = parsed.get("implications", [])
-        except Exception:
+        except (json.JSONDecodeError, AttributeError, TypeError, ValueError):
             logger.warning("Synthesize node parsing failed", exc_info=True)
             patterns = ["Pattern synthesis unavailable."]
             implications = ["Implication extraction unavailable."]
@@ -260,19 +261,13 @@ class AnalystAgent(BaseAgent):
             "Return ONLY the executive summary paragraph — no JSON, no headers."
         )
 
-        try:
-            exec_response = self._invoke_llm_with_retry(
-                [
-                    SystemMessage(content="You are a precise executive report writer."),
-                    HumanMessage(content=exec_summary_prompt),
-                ]
-            )
-            exec_summary: str = extract_text_content(exec_response.content).strip()
-        except Exception:
-            exec_summary = (
-                f"Analysis of '{query}' completed with "
-                f"{len(insights)} insights identified."
-            )
+        exec_response = self._invoke_llm_with_retry(
+            [
+                SystemMessage(content="You are a precise executive report writer."),
+                HumanMessage(content=exec_summary_prompt),
+            ]
+        )
+        exec_summary: str = extract_text_content(exec_response.content).strip()
 
         report = AnalysisReport(
             query=query,
@@ -339,6 +334,8 @@ class AnalystAgent(BaseAgent):
             final_state: AgentState = self._graph.invoke(
                 initial_state, config=self._get_config()
             )
+        except (AgentExecutionError, AgentBudgetExceededError):
+            raise
         except Exception as exc:
             raise AgentExecutionError(
                 f"[{self.name}] Analysis pipeline failed: {exc}"
